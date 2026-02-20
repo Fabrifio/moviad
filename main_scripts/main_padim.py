@@ -7,10 +7,11 @@ from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Dataset
 
 from moviad.models.padim.padim import Padim
-from moviad.trainers.trainer_padim import PadimTrainer
+from moviad.trainers.trainer_padim import TrainerPadim
 from moviad.datasets.mvtec.mvtec_dataset import MVTecDataset
 from moviad.utilities.evaluator import Evaluator, append_results
 from moviad.utilities.configurations import TaskType, Split
+
 
 BATCH_SIZE = 8
 IMAGE_INPUT_SIZE = (224, 224)
@@ -28,7 +29,7 @@ def main_train_padim(train_dataset: Dataset, test_dataset: Dataset, category: st
         layers_idxs=ad_layers,
     )
     padim.to(device)
-    trainer = PadimTrainer(
+    trainer = TrainerPadim(
         model=padim,
         device=device,
         save_path=model_checkpoint_save_path,
@@ -148,7 +149,7 @@ def main(args):
         if "cuda" in device:
             torch.cuda.manual_seed_all(seed)
 
-        diag_covs = [False] * len(categories)
+        diag_covs = [args.diag] * len(categories)
 
         for category_name, diag_cov in zip(categories, diag_covs):
 
@@ -172,13 +173,6 @@ def main(args):
                     layers_idxs=ad_layers_idxs,
                 )
                 padim.to(device)
-                trainer = PadimTrainer(
-                    model=padim,
-                    device=device,
-                    save_path=save_path,
-                    data_path=data_path,
-                    class_name=category_name,
-                )
 
                 train_dataset = MVTecDataset(
                     TaskType.SEGMENTATION,
@@ -194,7 +188,40 @@ def main(args):
                     train_dataset, batch_size=batch_size, pin_memory=True
                 )
 
-                trainer.train(train_dataloader)
+                test_dataset = MVTecDataset(
+                    TaskType.SEGMENTATION,
+                    data_path,
+                    category_name,
+                    Split.TEST,
+                    img_size=img_input_size,
+                )
+
+                test_dataset.load_dataset()
+
+                test_dataloader = DataLoader(
+                    test_dataset, batch_size=batch_size, pin_memory=True
+                )
+                
+                trainer = TrainerPadim(
+                    model=padim,
+                    train_dataloader=train_dataloader,
+                    test_dataloader=test_dataloader,
+                    device=device,
+                    save_path=save_path,
+                    apply_diagonalization=diag_cov,
+                    #data_path=data_path,
+                    #class_name=category_name,
+                )
+
+                trainer.train()
+
+                import pickle
+                if save_path and category_name == "pill" and seed == 1:
+                    print(f"--- Model saved in folder: {save_path} ---")
+                    state_dict = padim.state_dict()
+                    for hp in padim.HYPERPARAMS:
+                        state_dict[hp] = getattr(padim, hp)
+                    torch.save(state_dict, save_path, pickle_protocol=pickle.HIGHEST_PROTOCOL, _use_new_zipfile_serialization=True)
 
             if args.test:
                 print("---- PaDiM test ----")
@@ -250,7 +277,7 @@ def main(args):
                         metrics_savefile,
                         category_name,
                         seed,
-                        *scores,
+                        *scores.values(),
                         "padim",  # ad_model
                         ad_layers_idxs,
                         backbone_model_name,
@@ -313,6 +340,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda:1")
     parser.add_argument("--results_dirpath", type=str, default=None)
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
+    parser.add_argument("--diag", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--categories", type=str, nargs="+", default=categories)
     parser.add_argument(
         "--ad_layers_idxs",
