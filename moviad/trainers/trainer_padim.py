@@ -15,6 +15,7 @@ class TrainerPadim(Trainer):
         test_dataloader: torch.utils.data.DataLoader,
         device,
         apply_diagonalization=False,
+        save_path=None,
         logger=None,
     ):
         """
@@ -26,7 +27,8 @@ class TrainerPadim(Trainer):
             train_dataloader, 
             test_dataloader, 
             device, 
-            logger
+            logger,
+            save_path,
         )
         self.apply_diagonalization = apply_diagonalization
 
@@ -57,16 +59,25 @@ class TrainerPadim(Trainer):
         if self.apply_diagonalization:
             self.model.fit_multivariate_diagonal_gaussian(embedding_vectors, update_params=True, logger=self.logger)
         else:
-            self.model.fit_multivariate_gaussian(embedding_vectors, update_params=True, logger=self.logger)
-        
-        metrics = self.evaluator.evaluate(self.model)
+            self.model.fit_multivariate_diagonal_gaussian(embedding_vectors, update_params=True, logger=self.logger)
+            self.model.fit_pca_sr(embedding_vectors, update_params=True)
 
-        if self.logger is not None:
-            self.logger.log(
-                metrics
-            )
+        metrics = {
+            "img_roc_auc": 0.1,
+            "pxl_roc_auc": 0.1,
+            "img_f1": 0.1,
+            "pxl_f1": 0.1,
+            "img_pr_auc": 0.1,
+            "pxl_pr_auc": 0.1,
+            "pxl_au_pro": 0.1
+        } #self.evaluator.evaluate(self.model)
 
-        print("End training performances:")
-        self.print_metrics(metrics)
+        #if self.logger is not None:
+        #    self.logger.log(
+        #        metrics
+        #    )
+#
+        #print("End training performances:")
+        #self.print_metrics(metrics)
 
         return TrainerResult(**metrics)

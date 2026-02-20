@@ -12,6 +12,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from ...utilities.custom_feature_extractor_trimmed import CustomFeatureExtractor
+from ...utilities.distances import malahanobis_distance_diagonal
 
 # Dict: "backbone_model_name" -> {(layer_idxs): (true_dimension, random_projection_dimension)}
 EMBEDDING_SIZES = {
@@ -60,8 +61,11 @@ class Padim(nn.Module):
         "d",
         "gauss_mean",
         "gauss_cov",
+        "diagonal_gauss_cov",
         "diag_cov",
         "layers_idxs",
+        "pca_vars",
+        "pca_vecs",
     ]
 
     def __init__(
@@ -101,6 +105,10 @@ class Padim(nn.Module):
         self.train_outputs = None  # list of mean and covariance matrix numpy arrays
         self.gauss_mean = None
         self.gauss_cov = None
+
+        self.pca_vecs = None
+        self.pca_vars = None
+        self.pca_rank = None
 
     @staticmethod
     def embedding_concat(x, y):
@@ -170,7 +178,7 @@ class Padim(nn.Module):
         if self.diag_cov:
             dist_list = self.compute_distances_diagonal(embedding_vectors)
         else:
-            dist_list = self.compute_distances(embedding_vectors)
+            dist_list = self.compute_distance_srk(embedding_vectors)
         # 4. upsample
         score_map = (
             F.interpolate(
@@ -202,24 +210,68 @@ class Padim(nn.Module):
             List of mean and covariance matrix diagonal numpy arrays
         """
         B, C, H, W = embedding_vectors.size()
+        HW = H * W
 
-        embedding_vectors = embedding_vectors.view(B, C, H * W)
+        embedding_vectors = embedding_vectors.view(B, C, HW)
         mean = torch.mean(embedding_vectors.cpu(), dim=0).numpy()
-        diagonal_cov = torch.zeros(C, H*W).numpy()
+        diagonal_cov = torch.zeros(C, HW).numpy()
         I = np.identity(C)
-        # for every "patch" in the feature map, compute the covariance across the batch
-        for i in range(H * W):
-            # TODO: use np.var instead of np.cov in diagonal covariance computation
-            temp_cov = (
-                    np.cov(embedding_vectors[:, :, i].cpu().numpy(), rowvar=False)
-                    + 0.01 * I
+        # for every "patch" in the feature map, compute the variance across the batch
+        for i in range(HW):
+            diagonal_cov[:, i] = (
+                    np.var(embedding_vectors[:, :, i].cpu().numpy(), axis=0, ddof=1)
+                    + 0.01
             )
-
-            diagonal_cov[:, i] = np.diag(temp_cov)
 
         if update_params:
             self.gauss_mean, self.diagonal_gauss_cov = mean, diagonal_cov
         return mean, diagonal_cov
+
+    def fit_pca(self, embedding_vectors: torch.Tensor, update_params=True):
+        B, C, H, W = embedding_vectors.size()
+        HW = H * W
+
+        embedding_vectors = embedding_vectors.view(B, C, HW).cpu().numpy()
+        pca_vecs = np.zeros((C, HW), dtype=np.float32)
+        pca_vars = np.zeros((HW,), dtype=np.float32) 
+
+        for i in range(HW):
+            cov = np.cov(embedding_vectors[:, :, i], rowvar=False) + 1e-4 * np.eye(C)
+            
+            eigvals, eigvecs = np.linalg.eigh(cov)
+            idx = np.argmax(eigvals)
+            pca_vecs[:, i] = eigvecs[:, idx]
+            pca_vars[i] = eigvals[idx]
+        
+        if update_params:
+            self.pca_vars = pca_vars
+            self.pca_vecs = pca_vecs
+
+        return pca_vecs, pca_vars
+    
+    def fit_pca_sr(self, embedding_vectors: torch.Tensor, update_params=True):
+        B, C, H, W = embedding_vectors.size()
+        HW = H * W
+
+        embedding_vectors = embedding_vectors.view(B, C, HW).cpu().numpy()
+
+        pca_vecs = np.zeros((C, self.pca_rank, HW), dtype=np.float32)   # [C, k, HW]
+        pca_vars = np.zeros((self.pca_rank, HW), dtype=np.float32)     # [k, HW]
+
+        for i in range(HW):
+            cov = np.cov(embedding_vectors[:, :, i], rowvar=False) + 1e-4 * np.eye(C)
+
+            eigvals, eigvecs = np.linalg.eigh(cov)
+            idx = np.argsort(eigvals)[::-1][:self.pca_rank]   # top-k
+
+            pca_vecs[:, :, i] = eigvecs[:, idx]   # [C, k]
+            pca_vars[:, i] = eigvals[idx]         # [k]
+
+        if update_params:
+            self.pca_vars = pca_vars              # [k, HW]
+            self.pca_vecs = pca_vecs              # [C, k, HW]
+
+        return pca_vecs, pca_vars
 
     def fit_multivariate_gaussian(self, embedding_vectors, update_params, logger=None):
         """
@@ -336,19 +388,78 @@ class Padim(nn.Module):
         Compute the Mahalanobis distances between the embedding vectors and the
         multivariate Gaussian distribution.
         """
-        B, C, H, W = embedding_vectors.size()
-        embedding_vectors = embedding_vectors.view(B, C, H * W).cpu().numpy()
-        dist_list = []
         assert (
                 self.gauss_mean is not None and self.diagonal_gauss_cov is not None
         ), "The model must be trained first."
-        # compute each patch-embedding distance
-        for i in range(H * W):
-            mean = self.gauss_mean[:, i]
-            diag_cov_i = self.diagonal_gauss_cov[:, i]
-            dist = [
-                malahanobis_distance_diagonal(sample[:, i], mean, diag_cov_i) for sample in embedding_vectors
-            ]
-            dist_list.append(dist)
-        dist_list = np.array(dist_list).transpose(1, 0).reshape(B, H, W)
-        return torch.tensor(dist_list)
+        
+        B, C, H, W = embedding_vectors.shape
+        embedding_vectors = embedding_vectors.view(B, C, H * W).cpu().numpy()
+        mean = self.gauss_mean[None, :, :]
+        diag_cov = self.diagonal_gauss_cov[None, :, :]
+
+        diff = embedding_vectors - mean  # [B, C, H*W]
+        normalized_diff = diff ** 2 / diag_cov
+        distances = np.sqrt(np.sum(normalized_diff, axis=1))
+        distances = distances.reshape(B, H, W)
+        return torch.tensor(distances)
+    
+    def compute_distance_sr(self, embedding_vectors: torch.Tensor):
+        
+        B, C, H, W = embedding_vectors.shape
+        HW = H * W
+        X = embedding_vectors.view(B, C, HW).cpu().numpy()
+
+        # mean per-patch 
+        mean = self.gauss_mean[None, :, :]                 # [1, C, HW]
+        diag_cov = self.diagonal_gauss_cov[None, :, :]     # [1, C, HW]
+        diff = X - mean                                    # [B, C, HW]
+
+        # diagonal malahanobis
+        d_diag = np.sum(diff ** 2 / diag_cov, axis=1)      # [B, HW]
+
+        # PCA rank-1 per-patch
+        u = self.pca_vecs                                  # [C, HW]
+        lam = self.pca_vars                                # [HW]
+        alpha = lam / (np.mean(diag_cov, axis=1) + 1e-8)
+
+        # projection per-patch
+        proj = np.sum(diff * u[None, :, :], axis=1)
+        d_pca = (proj ** 2) / (lam[None, :] + 1e-8)
+
+        # distance
+        distances = d_diag - alpha * d_pca
+        distances = np.sqrt(np.maximum(distances, 0.0))
+
+        distances = distances.reshape(B, H, W)
+        return torch.tensor(distances)
+    
+    def compute_distance_srk(self, embedding_vectors: torch.Tensor):
+        
+        B, C, H, W = embedding_vectors.shape
+        HW = H * W
+        X = embedding_vectors.view(B, C, HW).cpu().numpy()
+
+        # mean per-patch 
+        mean = self.gauss_mean[None, :, :]                 # [1, C, HW]
+        diag_cov = self.diagonal_gauss_cov[None, :, :]     # [1, C, HW]
+        diff = X - mean                                    # [B, C, HW]
+
+        # diagonal malahanobis
+        d_diag = np.sum(diff ** 2 / (diag_cov + 1e-8), axis=1)      # [B, HW]
+
+        # PCA rank-1 per-patch
+        u = self.pca_vecs + 1e-8                                 # [C, HW]
+        lam = self.pca_vars + 1e-8                               # [HW]
+        alpha = lam / (np.mean(diag_cov, axis=1) + 1e-8)
+
+        # projection per-patch
+        proj = np.einsum('bch,ckh->bkh', diff, u)
+        d_pca = (proj ** 2) / (lam[None, :, :] + 1e-8)
+        d_pca = np.sum(alpha[None, :, :] * d_pca, axis=1)
+
+        # distance
+        distances = d_diag - d_pca
+        distances = np.sqrt(np.maximum(distances, 0.0))
+
+        distances = distances.reshape(B, H, W)
+        return torch.tensor(distances)
