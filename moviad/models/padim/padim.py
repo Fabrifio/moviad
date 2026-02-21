@@ -62,7 +62,7 @@ class Padim(nn.Module):
         "gauss_mean",
         "gauss_cov",
         "diagonal_gauss_cov",
-        "diag_cov",
+        "model_mode",
         "layers_idxs",
         "pca_vars",
         "pca_vecs",
@@ -74,7 +74,7 @@ class Padim(nn.Module):
             class_name,
             device,
             layers_idxs: list,
-            diag_cov=False,
+            model_mode="std",
     ):
         """
         Args:
@@ -82,13 +82,14 @@ class Padim(nn.Module):
             save_path: path to save the model and the extracted features
             class_name: one of the following strings: 'bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut',
                 'leather', 'metal_nut', 'pill', 'screw', 'tile', 'toothbrush', 'transistor', 'wood', 'zipper'
-            diag_cov: if True, keep only the diagonal elements of the covariance matrices
+            mode: string identifying padim model mode: standard = 'std'; diagonal = 'diag' to keep only the diagonal elements of the covariance matrices;
+                Super-Rank = 'sr' to keep the diagonal covariance and an arbitrary number of PCA eigenvectors and values.
         """
         super(Padim, self).__init__()
         self.diagonal_gauss_cov = None
         self.class_name = class_name
         self.device = device
-        self.diag_cov = diag_cov
+        self.model_mode = model_mode
         # feature extractor backbone model
         self.backbone_model_name = backbone_model_name
         self.layers_idxs = layers_idxs
@@ -175,10 +176,15 @@ class Padim(nn.Module):
         # 2. use the feature maps to get the embeddings
         embedding_vectors = self.raw_feature_maps_to_embeddings(layer_outputs)
         # 3. compute the distance matrix
-        if self.diag_cov:
+        if self.model_mode == "std":
             dist_list = self.compute_distances_diagonal(embedding_vectors)
-        else:
+        elif self.model_mode == "diag":
+            dist_list = self.compute_distances(embedding_vectors)
+        elif self.model_mode == "sr":
             dist_list = self.compute_distance_srk(embedding_vectors)
+        else:
+            raise NotImplementedError(f"Padim '{self.mode}' mode not supported.")
+        
         # 4. upsample
         score_map = (
             F.interpolate(
@@ -202,7 +208,7 @@ class Padim(nn.Module):
 
         return score_map, img_scores
 
-    def fit_multivariate_diagonal_gaussian(self, embedding_vectors: torch.Tensor, update_params: bool, logger=None) -> (torch.Tensor, torch.Tensor):
+    def fit_multivariate_diagonal_gaussian(self, embedding_vectors: torch.Tensor, update_params: bool, logger=None) -> tuple[torch.Tensor]:
         """
         Fit a multivariate Gaussian distribution to the set of given embedding vectors.
 
@@ -288,18 +294,10 @@ class Padim(nn.Module):
         I = np.identity(C)
         # for every "patch" in the feature map, compute the covariance across the batch
         for i in range(H * W):
-            if self.diag_cov:
-                temp_cov = (
-                        np.cov(embedding_vectors[:, :, i].cpu().numpy(), rowvar=False)
-                        + 0.01 * I
-                )
-                temp_cov[~I.astype(bool)] = 0
-                cov[:, :, i] = temp_cov
-            else:
-                cov[:, :, i] = (
-                        np.cov(embedding_vectors[:, :, i].cpu().numpy(), rowvar=False)
-                        + 0.01 * I
-                )
+            cov[:, :, i] = (
+                    np.cov(embedding_vectors[:, :, i].cpu().numpy(), rowvar=False)
+                    + 0.01 * I
+            )
             if logger is not None:
                 logger.log({
                     "cov": cov[:, :, i],

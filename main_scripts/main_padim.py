@@ -1,3 +1,4 @@
+import argparse
 import os, random
 from pathlib import Path
 from datetime import datetime
@@ -18,130 +19,21 @@ IMAGE_INPUT_SIZE = (224, 224)
 OUTPUT_SIZE = (224, 224)
 
 
-def main_train_padim(train_dataset: Dataset, test_dataset: Dataset, category: str, backbone: str, ad_layers: list,
-                     device: torch.device, model_checkpoint_save_path: str, diagonal_convergence: bool = False,
-                     results_dirpath: str = None):
-    padim = Padim(
-        backbone,
-        category,
-        device=device,
-        diag_cov=diagonal_convergence,
-        layers_idxs=ad_layers,
-    )
-    padim.to(device)
-    trainer = TrainerPadim(
-        model=padim,
-        device=device,
-        save_path=model_checkpoint_save_path,
-        data_path=None,
-        class_name=category,
-    )
-
-    train_dataloader = DataLoader(
-        train_dataset, batch_size=BATCH_SIZE, pin_memory=True, drop_last=True
-    )
-
-    trainer.train(train_dataloader)
-
-    # evaluate the model
-    test_dataloader = DataLoader(
-        test_dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True
-    )
-
-    evaluator = Evaluator(test_dataloader=test_dataloader, device=device)
-    img_roc, pxl_roc, f1_img, f1_pxl, img_pr, pxl_pr, pxl_pro = evaluator.evaluate(padim)
-
-    print("Evaluation performances:")
-    print(f"""
-            img_roc: {img_roc}
-            pxl_roc: {pxl_roc}
-            f1_img: {f1_img}
-            f1_pxl: {f1_pxl}
-            img_pr: {img_pr}
-            pxl_pr: {pxl_pr}
-            pxl_pro: {pxl_pro}
-            """)
-
-
-def test_padim(test_dataset: Dataset, category: str, backbone: str, ad_layers: tuple, device: torch.device,
-               model_checkpoint_path: str, results_dirpath: str = None):
-    padim = Padim(
-        backbone,
-        category,
-        device=device,
-        layers_idxs=ad_layers,
-    )
-    path = padim.get_model_savepath(model_checkpoint_path)
-    padim.load_state_dict(
-        torch.load(path, map_location=device), strict=False
-    )
-    padim.to(device)
-    print(f"Loaded model from path: {path}")
-
-    # Evaluator
-    padim.eval()
-
-    test_dataloader = DataLoader(
-        test_dataset, batch_size=BATCH_SIZE, shuffle=True
-    )
-
-    # evaluate the model
-    evaluator = Evaluator(test_dataloader=test_dataloader, device=device)
-    img_roc, pxl_roc, f1_img, f1_pxl, img_pr, pxl_pr, pxl_pro = evaluator.evaluate(padim)
-
-    print("Evaluation performances:")
-    print(f"""
-        img_roc: {img_roc}
-        pxl_roc: {pxl_roc}
-        f1_img: {f1_img}
-        f1_pxl: {f1_pxl}
-        img_pr: {img_pr}
-        pxl_pr: {pxl_pr}
-        pxl_pro: {pxl_pro}
-        """)
-
-
-
-def save_results(results_dirpath: str, category: str, seed: int, scores: tuple, backbone: str, ad_layers: tuple,
-                 img_input_size: tuple, output_size: tuple):
-    metrics_savefile = Path(
-        results_dirpath, f"metrics_{backbone}.csv"
-    )
-    # check if the metrics path exists
-    dirpath = os.path.dirname(metrics_savefile)
-    if not os.path.exists(dirpath):
-        os.makedirs(dirpath)
-
-    # save the scores
-    append_results(
-        metrics_savefile,
-        category,
-        seed,
-        *scores,
-        "padim",  # ad_model
-        ad_layers,
-        backbone,
-        "IMAGENET1K_V2",  # NOTE: hardcoded, should be changed
-        None,  # bootstrap_layer
-        -1,  # epochs (not used)
-        img_input_size,
-        output_size,
-    )
-
-
 def main(args):
-    batch_size = args.batch_size  # 32
-    save_path = args.save_path  # "output/padim/"
-    data_path = args.data_path  # "../datasets/mvtec/"
-    device = args.device  # "cuda:1"  # cuda:0, cuda:1, cuda:2, cpu
-    backbone_model_name = args.backbone_model_name  # "resnet18"
-    save_figures = args.save_figures  # False
-    results_dirpath = args.results_dirpath  # "metrics/padim/"
-    categories = args.categories
-    seeds = args.seeds
-    img_input_size = args.img_input_size
+    mode = args.mode
+    model_mode = args.model_mode
+    backbone_id = args.backbone_id
+    input_size = args.input_size
     output_size = args.output_size
-    ad_layers_idxs = args.ad_layers_idxs
+    ad_layers = args.ad_layers
+    batch_size = args.batch_size
+    
+    seeds = args.seeds
+    device = args.device
+    categories = args.categories
+    save_path = args.save_path
+    data_path = args.data_path
+    results_dirpath = args.results_dirpath
 
     for seed in seeds:
         random.seed(seed)
@@ -149,28 +41,19 @@ def main(args):
         if "cuda" in device:
             torch.cuda.manual_seed_all(seed)
 
-        diag_covs = [args.diag] * len(categories)
+        for category_name in zip(categories):
 
-        for category_name, diag_cov in zip(categories, diag_covs):
-
-            print(
-                "class name:",
-                category_name,
-                " | diagonal covariance:",
-                diag_cov,
-                " | save figures:",
-                save_figures,
-            )
+            print("class name:", category_name)
 
             if args.train:
                 print("---- PaDiM train ----")
 
                 padim = Padim(
-                    backbone_model_name,
+                    backbone_id,
                     category_name,
                     device=device,
-                    diag_cov=diag_cov,
-                    layers_idxs=ad_layers_idxs,
+                    model_mode=model_mode,
+                    layers_idxs=ad_layers,
                 )
                 padim.to(device)
 
@@ -179,7 +62,7 @@ def main(args):
                     data_path,
                     category_name,
                     Split.TRAIN,
-                    img_size=img_input_size,
+                    img_size=input_size,
                 )
 
                 train_dataset.load_dataset()
@@ -193,7 +76,7 @@ def main(args):
                     data_path,
                     category_name,
                     Split.TEST,
-                    img_size=img_input_size,
+                    img_size=input_size,
                 )
 
                 test_dataset.load_dataset()
@@ -208,9 +91,7 @@ def main(args):
                     test_dataloader=test_dataloader,
                     device=device,
                     save_path=save_path,
-                    apply_diagonalization=diag_cov,
-                    #data_path=data_path,
-                    #class_name=category_name,
+                    model_mode=model_mode,
                 )
 
                 trainer.train()
@@ -229,10 +110,10 @@ def main(args):
                 # load the model if it was not trained in this run
                 if not args.train:
                     padim = Padim(
-                        backbone_model_name,
+                        backbone_id,
                         category_name,
                         device=device,
-                        layers_idxs=ad_layers_idxs,
+                        layers_idxs=ad_layers,
                     )
                     path = padim.get_model_savepath(save_path)
                     padim.load_state_dict(
@@ -249,7 +130,7 @@ def main(args):
                     data_path,
                     category_name,
                     Split.TEST,
-                    img_size=img_input_size,
+                    img_size=input_size,
                     gt_mask_size=output_size,
                 )
 
@@ -265,7 +146,7 @@ def main(args):
 
                 if results_dirpath is not None:
                     metrics_savefile = Path(
-                        results_dirpath, f"metrics_{backbone_model_name}.csv"
+                        results_dirpath, f"metrics_{backbone_id}.csv"
                     )
                     # check if the metrics path exists
                     dirpath = os.path.dirname(metrics_savefile)
@@ -279,8 +160,8 @@ def main(args):
                         seed,
                         *scores.values(),
                         "padim",  # ad_model
-                        ad_layers_idxs,
-                        backbone_model_name,
+                        ad_layers,
+                        backbone_id,
                         "IMAGENET1K_V2",  # NOTE: hardcoded, should be changed
                         None,  # bootstrap_layer
                         -1,  # epochs (not used)
@@ -290,88 +171,28 @@ def main(args):
 
 
 if __name__ == "__main__":
-    import argparse
-
-    categories = [
-        "hazelnut",  # at the top because very large in memory, so we can check if it crashes
-        "bottle",
-        "cable",
-        "capsule",
-        "carpet",
-        "grid",
-        "leather",
-        "metal_nut",
-        "pill",
-        "screw",
-        "tile",
-        "toothbrush",
-        "transistor",
-        "wood",
-        "zipper",
+    mvtec_categories = [
+        "hazelnut", "bottle", "cable", "capsule", "carpet", "grid", "leather", "metal_nut", 
+        "pill", "screw", "tile", "toothbrush", "transistor", "wood", "zipper",
     ]
+    
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train", action="store_true")
-    parser.add_argument("--test", action="store_true")
-    parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--save_figures", action="store_true")
-    parser.add_argument("--save_logs", action="store_true")
-    parser.add_argument(
-        "--backbone_model_name",
-        type=str,
-        help="resnet18, wide_resnet50_2, mobilenet_v2, mcunet-in3",
-    )
-    parser.add_argument(
-        "--img_input_size",
-        type=int,
-        default=(224, 224),
-        help="input image size, if None, default is used",
-    )
-    parser.add_argument(
-        "--output_size",
-        type=int,
-        default=(224, 224),
-        help="output image size, if None, default is used",
-    )
+
+    parser.add_argument("--mode", type=str, default="train", choices=["train", "test"], help="Script execution mode: train or test")
+    parser.add_argument("--model-mode", type=str, default="default", choices=["std", "diag", "sr"], help="Padim model mode. Standard: = 'std'; Diagonal = 'diag'; Super-Rank = 'sr'")
+    parser.add_argument("--backbone-id", type=str, default=None, help="resnet18, wide_resnet50_2, mobilenet_v2, mcunet-in3")
+    parser.add_argument("--ad_layers", type=int, nargs="+", required=True, help="list of layers idxs to use for feature extraction")
+    parser.add_argument("--input_size", type=tuple[int], default=(224, 224), help="input image size, if None, default is used")
+    parser.add_argument("--output_size", type=tuple[int], default=(224, 224), help="output image size, if None, default is used")
     parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument(
-        "--save_path", type=str, default=None, help="where to save the model checkpoint"
-    )
-    parser.add_argument("--data_path", type=str, default="../../datasets/mvtec/")
-    parser.add_argument("--device", type=str, default="cuda:1")
-    parser.add_argument("--results_dirpath", type=str, default=None)
+    
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
-    parser.add_argument("--diag", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--categories", type=str, nargs="+", default=categories)
-    parser.add_argument(
-        "--ad_layers_idxs",
-        type=int,
-        nargs="+",
-        required=True,
-        help="list of layers idxs to use for feature extraction",
-    )
+    parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--categories", type=str, nargs="+", default=mvtec_categories, help="Dataset category to test")
+    parser.add_argument("--save_path", type=str, default=None, help="where to save the model checkpoint")
+    parser.add_argument("--data_path", type=str, default="../../datasets/mvtec/")
+    parser.add_argument("--results_dirpath", type=str, default=None)
 
     args = parser.parse_args()
 
-    log_filename = "padim.log"
-    s = "DEBUG " if args.debug else ""
-
-    try:
-        main(args)
-
-        if args.save_logs:
-            # create a log file if it does not exist
-            if not os.path.exists(log_filename):
-                with open(log_filename, "w") as f:
-                    f.write("")
-            # write the args as a string to the log file
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with open(log_filename, "a") as f:
-                f.write(s + "finished " + "\t" + now_str + "\t" + str(args) + "\n")
-
-    except Exception as e:
-        if args.save_logs:
-            # write the args as a string to the log file
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with open(log_filename, "a") as f:
-                f.write(s + "** FAILED **" + "\t" + now_str + "\t" + str(args) + "\n")
-        raise e
+    main(args)
