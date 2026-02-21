@@ -161,7 +161,6 @@ class Padim(nn.Module):
         }
         # forward through the net to get the intermediate outputs with the hooks
         with torch.no_grad():
-            # _ = self.backbone(x)
             _ = self.backbone(x)
         # get intermediate layer outputs
         for layer, output in zip(self.layers_idxs, self.outputs):  # new
@@ -210,7 +209,8 @@ class Padim(nn.Module):
 
     def fit_multivariate_diagonal_gaussian(self, embedding_vectors: torch.Tensor, update_params: bool, logger=None) -> tuple[torch.Tensor]:
         """
-        Fit a multivariate Gaussian distribution to the set of given embedding vectors.
+        Fit a multivariate Gaussian distribution to the set of given embedding vectors, 
+        with diagonal covariance matrix (assuming independence of embedding dimensions).
 
         Returns:
             List of mean and covariance matrix diagonal numpy arrays
@@ -234,6 +234,15 @@ class Padim(nn.Module):
         return mean, diagonal_cov
     
     def fit_pca_sr(self, embedding_vectors: torch.Tensor, update_params=True):
+        """
+        Fit a multivariate Gaussian distribution to the set of given embedding vectors,
+        assuming given diagonal covariance matrix, using additional PCA eigenvectors 
+        and eigenvalues to represent correlations between embedding dimensions 
+        (low rank correlation matrix).
+
+        Returns:
+            List of eingenvalues and eigenvectors matrix numpy arrays
+        """
         B, C, H, W = embedding_vectors.size()
         HW = H * W
 
@@ -362,7 +371,7 @@ class Padim(nn.Module):
     def compute_distances_diagonal(self, embedding_vectors: torch.Tensor):
         """
         Compute the Mahalanobis distances between the embedding vectors and the
-        multivariate Gaussian distribution.
+        multivariate Gaussian distribution using diagonal covariance matrix.
         """
         assert (
                 self.gauss_mean is not None and self.diagonal_gauss_cov is not None
@@ -380,7 +389,12 @@ class Padim(nn.Module):
         return torch.tensor(distances)
     
     def compute_distance_sr(self, embedding_vectors: torch.Tensor):
-        
+        """
+        Compute the Mahalanobis distances between the embedding vectors and the
+        multivariate Gaussian distribution.
+        It is computed using a diagonal covariance matrix plus a set of PCA eigenvectors
+        and eigenvalues representing correlations between embedding dimensions.
+        """
         B, C, H, W = embedding_vectors.shape
         HW = H * W
         X = embedding_vectors.view(B, C, HW).cpu().numpy()
