@@ -177,11 +177,11 @@ class Padim(nn.Module):
         embedding_vectors = self.raw_feature_maps_to_embeddings(layer_outputs)
         # 3. compute the distance matrix
         if self.model_mode == "std":
-            dist_list = self.compute_distances_diagonal(embedding_vectors)
-        elif self.model_mode == "diag":
             dist_list = self.compute_distances(embedding_vectors)
+        elif self.model_mode == "diag":
+            dist_list = self.compute_distances_diagonal(embedding_vectors)
         elif self.model_mode == "sr":
-            dist_list = self.compute_distance_srk(embedding_vectors)
+            dist_list = self.compute_distance_sr(embedding_vectors)
         else:
             raise NotImplementedError(f"Padim '{self.mode}' mode not supported.")
         
@@ -232,28 +232,6 @@ class Padim(nn.Module):
         if update_params:
             self.gauss_mean, self.diagonal_gauss_cov = mean, diagonal_cov
         return mean, diagonal_cov
-
-    def fit_pca(self, embedding_vectors: torch.Tensor, update_params=True):
-        B, C, H, W = embedding_vectors.size()
-        HW = H * W
-
-        embedding_vectors = embedding_vectors.view(B, C, HW).cpu().numpy()
-        pca_vecs = np.zeros((C, HW), dtype=np.float32)
-        pca_vars = np.zeros((HW,), dtype=np.float32) 
-
-        for i in range(HW):
-            cov = np.cov(embedding_vectors[:, :, i], rowvar=False) + 1e-4 * np.eye(C)
-            
-            eigvals, eigvecs = np.linalg.eigh(cov)
-            idx = np.argmax(eigvals)
-            pca_vecs[:, i] = eigvecs[:, idx]
-            pca_vars[i] = eigvals[idx]
-        
-        if update_params:
-            self.pca_vars = pca_vars
-            self.pca_vecs = pca_vecs
-
-        return pca_vecs, pca_vars
     
     def fit_pca_sr(self, embedding_vectors: torch.Tensor, update_params=True):
         B, C, H, W = embedding_vectors.size()
@@ -402,36 +380,6 @@ class Padim(nn.Module):
         return torch.tensor(distances)
     
     def compute_distance_sr(self, embedding_vectors: torch.Tensor):
-        
-        B, C, H, W = embedding_vectors.shape
-        HW = H * W
-        X = embedding_vectors.view(B, C, HW).cpu().numpy()
-
-        # mean per-patch 
-        mean = self.gauss_mean[None, :, :]                 # [1, C, HW]
-        diag_cov = self.diagonal_gauss_cov[None, :, :]     # [1, C, HW]
-        diff = X - mean                                    # [B, C, HW]
-
-        # diagonal malahanobis
-        d_diag = np.sum(diff ** 2 / diag_cov, axis=1)      # [B, HW]
-
-        # PCA rank-1 per-patch
-        u = self.pca_vecs                                  # [C, HW]
-        lam = self.pca_vars                                # [HW]
-        alpha = lam / (np.mean(diag_cov, axis=1) + 1e-8)
-
-        # projection per-patch
-        proj = np.sum(diff * u[None, :, :], axis=1)
-        d_pca = (proj ** 2) / (lam[None, :] + 1e-8)
-
-        # distance
-        distances = d_diag - alpha * d_pca
-        distances = np.sqrt(np.maximum(distances, 0.0))
-
-        distances = distances.reshape(B, H, W)
-        return torch.tensor(distances)
-    
-    def compute_distance_srk(self, embedding_vectors: torch.Tensor):
         
         B, C, H, W = embedding_vectors.shape
         HW = H * W
