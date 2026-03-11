@@ -344,7 +344,6 @@ class Padim(nn.Module):
         state_dict = {k: v for k, v in state_dict.items() if k not in self.HYPERPARAMS}
         return super().load_state_dict(state_dict, strict=strict)
 
-
     def compute_distances(self, embedding_vectors: torch.Tensor):
         """
         Compute the Mahalanobis distances between the embedding vectors and the
@@ -366,7 +365,6 @@ class Padim(nn.Module):
             dist_list.append(dist)
         dist_list = np.array(dist_list).transpose(1, 0).reshape(B, H, W)
         return torch.tensor(dist_list)
-
 
     def compute_distances_diagonal(self, embedding_vectors: torch.Tensor):
         """
@@ -407,7 +405,7 @@ class Padim(nn.Module):
         # diagonal malahanobis
         d_diag = np.sum(diff ** 2 / (diag_cov + 1e-8), axis=1)      # [B, HW]
 
-        # PCA rank-1 per-patch
+        # PCA rank-N per-patch
         u = self.pca_vecs + 1e-8                                 # [C, HW]
         lam = self.pca_vars + 1e-8                               # [HW]
         alpha = lam / (np.mean(diag_cov, axis=1) + 1e-8)
