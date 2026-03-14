@@ -1,4 +1,3 @@
-import os
 import random
 import numpy as np
 
@@ -6,31 +5,8 @@ from PIL import Image
 from pathlib import Path
 
 import torch
-from torch.utils.data import Dataset, Subset
+from torch.utils.data import Dataset
 from torchvision import transforms
-
-
-def split_trivial_vad(dataset, train_normal_ratio=0.8):
-    """
-    Trivial split function for VAD applications. Anomalous images only in the test dataset.
-    Args:
-        train_normal_ratio (float): split ratio of normal images for the training dataset 
-    """
-
-    normals = [i for i, s in enumerate(dataset.samples) if s[2] == 0]
-    anomalies = [i for i, s in enumerate(dataset.samples) if s[2] == 1]
-
-    np.random.shuffle(normals)
-
-    split_idx = int(len(normals) * train_normal_ratio)
-
-    train_idx = normals[:split_idx]
-    test_idx = normals[split_idx:] + anomalies
-
-    train_dataset = Subset(dataset, train_idx)
-    test_dataset = Subset(dataset, test_idx)
-
-    return train_dataset, test_dataset
 
 
 class AnoVoxDataset(Dataset):
