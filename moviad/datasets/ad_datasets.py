@@ -133,7 +133,7 @@ if __name__ == "__main__":
     ]) 
 
     # train and test datasets
-    root_dir = "/home/fgenilotti/Downloads/anovox/Anovox_Sample/Anovox"
+    root_dir = "/anovox/Anovox_Sample/Anovox"
     dataset = AnoVoxDataset(
         root_dir=root_dir, 
         mode="all", 
