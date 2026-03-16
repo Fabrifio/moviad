@@ -153,7 +153,7 @@ if __name__ == "__main__":
     )
 
     # print datasets' size
-    print(f"Dataset size: {len(dataset)}")
+    print(f"Total dataset size: {len(dataset)}")
     print(f"Train dataset size: {len(train_dataset)} / {len(dataset)}")
     print(f"Test dataset size: {len(test_dataset)} / {len(dataset)}\n")
     
