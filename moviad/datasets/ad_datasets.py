@@ -67,6 +67,7 @@ class AnoVoxDataset(Dataset):
         anomalies = [s for s in self.samples if s[-1] == 1]
 
         np.random.shuffle(normals)
+        np.random.shuffle(anomalies)
 
         split_idx = int(len(normals) * self.normal_split_ratio)
 
@@ -77,7 +78,9 @@ class AnoVoxDataset(Dataset):
             self.samples = train_normals
 
         elif self.mode == "test":
-            self.samples = test_normals + anomalies
+            n_test_normals = int(len(normals) * (1 - self.normal_split_ratio))
+            n_test_anomalies = int(n_test_normals * 0.2 / (1 - 0.2))
+            self.samples = test_normals + anomalies[:n_test_anomalies]
 
     def _semantic_to_anomaly_mask(self, sem_img):
         sem = np.array(sem_img)
@@ -115,6 +118,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     random.seed(seed)
 
+    # --------------------- COPY FROM HERE -----------------------
     # define torchvision transformations
     transform = transforms.Compose([
         transforms.Resize(
@@ -134,10 +138,10 @@ if __name__ == "__main__":
 
     # train and test datasets
     root_dir = "/anovox/Anovox_Sample/Anovox"
-    dataset = AnoVoxDataset(
-        root_dir=root_dir, 
-        mode="all", 
-    )
+    dataset = AnoVoxDataset( # DELETE THIS LINE (debug only)
+        root_dir=root_dir,   # DELETE THIS LINE
+        mode="all",          # DELETE THIS LINE
+    )                        # DELETE THIS LINE
     train_dataset = AnoVoxDataset(
         root_dir=root_dir, 
         mode="train", 
@@ -151,6 +155,8 @@ if __name__ == "__main__":
         transform=transform, 
         sem_transform=sem_transform
     )
+    # --------------------- TO HERE -----------------------
+
 
     # print datasets' size
     print(f"Total dataset size: {len(dataset)}")
