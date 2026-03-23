@@ -111,6 +111,106 @@ class AnoVoxDataset(Dataset):
         return rgb, label, anomaly_mask, str(rgb_path)
 
 
+class LostAndFoundDataset(Dataset):
+    def __init__(
+        self, 
+        root_dir, 
+        mode="all",
+        normal_split_ratio=0.8,  
+        transform=None, 
+        sem_transform=None
+    ):
+        assert mode in ["train", "test", "all"]
+
+        self.NORMAL_LABELS = {0, 1, 31, 33, 34, 36, 37, 38, 39}
+        
+        self.samples = []
+        self.mode = mode
+        self.normal_split_ratio = normal_split_ratio 
+        self.transform = transform
+        self.sem_transform = sem_transform
+        
+        self.root_dir=Path(root_dir)
+        self._build_index()
+        self._apply_vad_split()
+
+    def _contains_anomaly(self, sem_path):
+        sem = np.array(Image.open(sem_path))
+        anomaly_pixels = ~np.isin(sem, list(self.NORMAL_LABELS))
+        return int(anomaly_pixels.any())
+    
+    def _build_index(self):
+        rgb_dir = self.root_dir / "leftImg8bit"
+        sem_dir = self.root_dir / "gtCoarse"
+
+        for split in ["train", "test"]:
+            rgb_split_dir = rgb_dir / split
+            sem_split_dir = sem_dir / split
+            
+            rgb_files = sorted(rgb_split_dir.rglob("*_leftImg8bit.png"))
+
+            for rgb_path in rgb_files:
+                img_id = rgb_path.relative_to(rgb_split_dir)
+
+                sem_name = rgb_path.name.replace(
+                    "_leftImg8bit.png",
+                    "_gtCoarse_labelIds.png"
+                )
+                sem_path = sem_split_dir / img_id.parent / sem_name
+                
+                if sem_path.exists():
+                    label = self._contains_anomaly(sem_path)
+                    self.samples.append((rgb_path, sem_path, label))
+    
+    def _apply_vad_split(self):
+        if self.mode == "all":
+            return
+
+        normals = [s for s in self.samples if s[-1] == 0]
+        anomalies = [s for s in self.samples if s[-1] == 1]
+
+        np.random.shuffle(normals)
+
+        split_idx = int(len(normals) * self.normal_split_ratio)
+
+        train_normals = normals[:split_idx]
+        test_normals = normals[split_idx:]
+
+        if self.mode == "train":
+            self.samples = train_normals
+
+        elif self.mode == "test":
+            self.samples = test_normals + anomalies
+
+    def _semantic_to_anomaly_mask(self, sem_img):
+        sem = np.array(sem_img)
+        mask = ~np.isin(sem, list(self.NORMAL_LABELS))
+        return Image.fromarray(mask.astype(np.uint8) * 255)
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        rgb_path, sem_path, label = self.samples[idx]
+
+        rgb = Image.open(rgb_path).convert("RGB")
+
+        if self.transform:
+            rgb = self.transform(rgb)
+
+        if self.mode == "train":
+            return rgb
+
+        semantic = Image.open(sem_path)
+        semantic = self._semantic_to_anomaly_mask(semantic)
+
+        anomaly_mask = None
+        if self.sem_transform:
+            anomaly_mask = self.sem_transform(semantic).int()
+
+        return rgb, label, anomaly_mask, str(rgb_path)
+
+
 if __name__ == "__main__":
     # set seed
     seed = 42
