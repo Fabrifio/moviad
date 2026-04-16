@@ -358,22 +358,22 @@ def dynamic_profile(model, dataloader, device, num_batches=10):
 
         images = batch[0].to(device)
 
-        #reset_gpu_stats(device)
+        reset_gpu_stats(device)
 
         # latency
         with torch.no_grad():
-            #sync_if_needed(device)
+            sync_if_needed(device)
             t0 = time.perf_counter()
 
             _ = model(images)
 
-            #sync_if_needed(device)
+            sync_if_needed(device)
             t1 = time.perf_counter()
 
         latencies.append((t1 - t0) / images.size(0))
 
         # GPU memory
-        gpu_mem_peak = 0#max(gpu_mem_peak, get_gpu_peak(device))
+        gpu_mem_peak = max(gpu_mem_peak, get_gpu_peak(device))
 
         # CPU memory
         mem_trace = memory_usage(
