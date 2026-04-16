@@ -358,22 +358,22 @@ def dynamic_profile(model, dataloader, device, num_batches=10):
 
         images = batch[0].to(device)
 
-        reset_gpu_stats(device)
+        #reset_gpu_stats(device)
 
         # latency
         with torch.no_grad():
-            sync_if_needed(device)
+            #sync_if_needed(device)
             t0 = time.perf_counter()
 
             _ = model(images)
 
-            sync_if_needed(device)
+            #sync_if_needed(device)
             t1 = time.perf_counter()
 
         latencies.append((t1 - t0) / images.size(0))
 
         # GPU memory
-        gpu_mem_peak = max(gpu_mem_peak, get_gpu_peak(device))
+        gpu_mem_peak = 0#max(gpu_mem_peak, get_gpu_peak(device))
 
         # CPU memory
         mem_trace = memory_usage(
@@ -407,7 +407,7 @@ def main(args):
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
-        if "cuda" in device:
+        if "cuda" in device.type:
             torch.cuda.manual_seed_all(seed)
 
         # load model
@@ -449,12 +449,14 @@ def main(args):
             pin_memory=True
         )
 
+        print(f"[INFO] Loaded dataset \n[INFO] Starting profiling")
+
         # dynamic profile
         dynamic_profile(
             model=model, 
             dataloader=test_dataloader, 
             device=device, 
-            num_batches=getattr(args, "num_batches", 100)
+            num_batches=getattr(args, "num_batches", 1000)
         )
 
 
@@ -464,7 +466,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model", 
         type=str, 
-        action="store_true", 
         help="Supported models: cfa; dinomaly; fastflow; padim; patchcore; rd4ad; ssnet; stfpm"
     )
     parser.add_argument(
@@ -475,6 +476,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--img_input_size",
         type=int,
+        nargs=2,
         default=(224, 224),
         help="Input image size: if None, default is used",
     )

@@ -1,18 +1,18 @@
 #!/bin/bash
 set -e
 
-DATASET_PATH="/home/fgenilotti/Downloads/mvtec"
+DATASET_PATH="/home/fgenilotti/Downloads/anovox/Anovox_Sample/Anovox"
 
 MODELS=(padim patchcore fastflow cfa dinomaly stfpm rd4ad ssnet)
 BACKBONE="mobilenet_v2"
 
-AD_LAYERS=(4 7 10)
+AD_LAYERS=(10 13 16)
 
 SEEDS=(1)
 BATCH_SIZES=(1)
 REPEATS=3
 
-IMG_SIZE="224 224"
+IMG_SIZE=(224 224)
 
 for MODEL in "${MODELS[@]}"; do
   for SEED in "${SEEDS[@]}"; do
@@ -29,9 +29,9 @@ for MODEL in "${MODELS[@]}"; do
           --device cpu \
           --seeds "${SEED}" \
           --batch_size "${BATCH_SIZE}" \
-          --num_batches 1 \
-          --img_input_size ${IMG_SIZE} \
-          --model_path "./checkpoints/${MODEL}.pt"
+          --num_batches 1000 \
+          --img_input_size ${IMG_SIZE[0]} ${IMG_SIZE[1]} \
+          --save_path "/home/fgenilotti/Downloads/padim_mobile.pt"
 
         echo "Completed run ${RUN} for ${MODEL}"
         echo "----------------------------------------------------"
