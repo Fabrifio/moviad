@@ -1,100 +1,331 @@
-import os
 import time
-import psutil
 import random
-from pathlib import Path
 
 from memory_profiler import memory_usage
-from calflops import calculate_flops
 
 import torch
 from torch.utils.data import DataLoader
-from torch.utils.data.dataset import Dataset
-
-from moviad.models.padim.padim import Padim
-from moviad.datasets.mvtec.mvtec_dataset import MVTecDataset
-from moviad.utilities.configurations import TaskType, Split
-
-IMAGE_INPUT_SIZE = (224, 224)
-OUTPUT_SIZE = (224, 224)
 
 
-def static_profile(model, img_size, batch_size, device):
-    print("--- Static Profiling ---")
+def idx_to_layer_name(backbone_model_name: str, idx: int) -> str | int:
+    if backbone_model_name in ["wide_resnet50_2"]:
+        return f"layer{idx}"
+    elif backbone_model_name == "mobilenet_v2":
+        return f"features.{idx}"
+    else:
+        return idx
 
-    # GPU backbone FLOPs
-    input_shape = (batch_size, 3, img_size[0], img_size[1])
 
-    model = model.to(device)
-    model.eval()
+def load_feature_extractor(config):
+    import timm
+    from moviad.utilities.custom_feature_extractor_trimmed import CustomFeatureExtractor
 
-    flops, macs, _ = calculate_flops(
-        model=model.backbone_model.model,
-        input_shape=tuple(input_shape),
-        output_as_string=False,
-        print_results=False,
-        output_precision=4,
+    CNN_BACKBONES = ["mobilenet_v2", "wide_resnet50_2"]
+    VIT_BACKBONES = ["deit_small_distilled_patch16_224", "deit_tiny_distilled_patch16_224"]
+
+    backbone = config.backbone_model_name
+    device = config.device
+
+    # CNN feature extractor
+    if backbone in CNN_BACKBONES:
+        if not hasattr(config, "ad_layers_idxs"):
+            raise ValueError(f"{backbone} requires ad_layers_idxs")
+
+        ad_layers = [
+            idx_to_layer_name(backbone, idx)
+            for idx in config.ad_layers_idxs
+        ]
+
+        feature_extractor = CustomFeatureExtractor(
+            backbone,
+            ad_layers,
+            device
+        )
+
+    # ViT feature extractor
+    elif backbone in VIT_BACKBONES:
+        feature_extractor = timm.create_model(
+            backbone,
+            pretrained=True
+        ).to(device)
+        
+        feature_extractor.eval()
+        for p in feature_extractor.parameters():
+            p.requires_grad = False
+
+    else:
+        raise ValueError(f"Unsupported backbone: {backbone}")
+
+    return feature_extractor
+
+
+def load_padim(config):
+    from moviad.models.padim.padim import Padim
+
+    # model init
+    model = Padim(
+        config.backbone_model_name,
+        None,
+        device=config.device,
+        layers_idxs=config.ad_layers_idxs,
     )
 
-    # number of parameters (frozen)
-    total_params = sum(p.numel() for p in model.backbone_model.model.parameters())
+    # load model
+    state_dict = torch.load(
+        config.save_path,
+        map_location=config.device,
+        weights_only=False
+    )
+    model.load_state_dict(state_dict, strict=False)
 
-    print(f"Backbone Params: {total_params} M")
-    print(f"Backbone MACs (per batch): {macs / 1e9:.3f} G")
-    print(f"Backbone FLOPs (per batch): {flops / 1e9:.3f} G")
+    model.to(config.device)
+    model.eval()
 
-    # CPU model static memory
-    bytes_per_elem = 4
-    
-    # infer output shape
-    dummy_input = torch.randn(1, 3, 224, 224).to(device)
-    with torch.no_grad():
-        output = model.backbone_model.model(dummy_input)
+    return model
 
-    # model feature and spatial dimensions
-    feature_dim = len(model.random_dimensions)
-    spatial_dim = spatial_dim = output[model.layers_idxs[0]].shape[2] * output[model.layers_idxs[0]].shape[3]
 
-    mean_mem = feature_dim * spatial_dim * bytes_per_elem
-    cov_mem = None
+def load_patchcore(config):
+    from moviad.models.patchcore.patchcore import PatchCore
 
-    if not model.diag_cov:
-        cov_mem = feature_dim * feature_dim * spatial_dim * bytes_per_elem
-    else:
-        cov_mem = feature_dim * spatial_dim * bytes_per_elem
+    # feature extractor
+    feature_extractor = load_feature_extractor(config)
 
-    print("\nCPU static memory:")
-    print(f"Mean: {mean_mem / 1e6:.2f} MB")
-    print(f"Covariance: {cov_mem / 1e6:.2f} MB")
-    print(f"Total stats: {(mean_mem + cov_mem) / 1e6:.2f} MB")
+    # model init
+    model = PatchCore(
+        config.device,
+        input_size=config.img_input_size,
+        feature_extractor=feature_extractor,
+        compression_method=None,
+        apply_quantization=False
+    )
 
-    # CPU distance computation FLOPs
-    per_loc_flops = None
+    # load model
+    model.load_model(config.save_path)
 
-    if not model.diag_cov:
-        per_loc_flops = feature_dim**2 + 2 * feature_dim
-    else:
-        per_loc_flops = feature_dim + 2 * feature_dim
+    model.to(config.device)
+    model.eval()
 
-    per_img_flops = spatial_dim * per_loc_flops
-    per_batch_flops = batch_size * per_img_flops
+    return model
 
-    print("\nCPU distance computation FLOPs:")
-    print(f"Per image: {per_img_flops / 1e6:.2f} MFLOPs")
-    print(f"Per batch: {per_batch_flops / 1e6:.2f} MFLOPs")
 
-    return {
-        "backbone_flops": flops,
-        "backbone_macs": macs,
-        "backbone_params": total_params,
-        "cpu_flops_per_image": per_img_flops,
-        "cpu_mem_bytes": mean_mem + cov_mem,
+def load_dinomaly(config):
+    from moviad.Dinomaly.models.uad import ViTill
+    from moviad.Dinomaly.models import vit_encoder
+    from moviad.Dinomaly.models.vision_transformer import Block as VitBlock, bMlp, LinearAttention2
+    from torch import nn
+    from functools import partial
+
+    # hard-coded config
+    target_layers = [2, 3, 4, 5, 6, 7, 8, 9]
+    fuse_layer_encoder = [[0, 1, 2, 3], [4, 5, 6, 7]]
+    fuse_layer_decoder = [[0, 1, 2, 3], [4, 5, 6, 7]]
+    DEIT_CONFIGS = {
+        "deit_tiny_16": {"embed_dim": 192, "num_heads": 3},
+        "deit_small_16": {"embed_dim": 384, "num_heads": 6},
+        "deit_base_16": {"embed_dim": 768, "num_heads": 12},
     }
+    embed_dim = DEIT_CONFIGS[config.backbone_model_name]["embed_dim"]
+    num_heads = DEIT_CONFIGS[config.backbone_model_name]["num_heads"] 
+
+    # encoder vit
+    encoder = vit_encoder.load(config.backbone_model_name)
+    encoder.to(config.device)
+
+    # bottleneck
+    bottleneck = nn.ModuleList([
+        bMlp(embed_dim, embed_dim * 4, embed_dim, drop=0.2)
+    ])
+
+    # decoder vit
+    decoder = nn.ModuleList([
+        VitBlock(
+            dim=embed_dim,
+            num_heads=num_heads,
+            mlp_ratio=4.,
+            qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-8),
+            attn=LinearAttention2
+        ) for _ in range(8)
+    ])
+
+    # model init
+    model = ViTill(
+        encoder=encoder,
+        bottleneck=bottleneck,
+        decoder=decoder,
+        target_layers=target_layers,
+        mask_neighbor_size=0,
+        fuse_layer_encoder=fuse_layer_encoder,
+        fuse_layer_decoder=fuse_layer_decoder
+    )
+
+    # load model
+    state_dict = torch.load(config.save_path, map_location=config.device)
+    model.load_state_dict(state_dict)
+
+    model.to(config.device)
+    model.eval()
+
+    return model
+
+
+def load_fastflow(config):
+    from moviad.models.fastflow.fastflow import create_fastflow
+
+    # model init
+    model = create_fastflow(
+        config.img_input_size,
+        config.backbone_model_name,
+        None,
+        None,
+        device=config.device
+    )
+
+    # load model
+    state_dict = torch.load(config.save_path, map_location=config.device)
+    model.load_state_dict(state_dict)
+
+    model.to(config.device)
+    model.eval()
+
+    return model
+
+
+def load_rd4ad(config):
+    from moviad.models.rd4ad.rd4ad import RD4AD
+
+    # model init
+    model = RD4AD(
+        config.backbone_model_name,
+        config.device,
+        input_size=config.img_input_size
+    )
+
+    # load model
+    state_dict = torch.load(
+        config.save_path,
+        map_location=config.device,
+        weights_only=False
+    )
+    model.load_state_dict(state_dict, strict=False)
+
+    model.to(config.device)
+    model.eval()
+
+    return model
+
+
+def load_cfa(config):
+    from moviad.models.cfa.cfa import CFA
+
+    feature_extractor = load_feature_extractor(config)
+
+    # model init
+    model = CFA(
+        feature_extractor, 
+        config.backbone_model_name, 
+        config.device
+    )
+
+    # load model
+    model.load_model(config.save_path)
+
+    model.to(config.device)
+    model.eval()
+
+    return model
+
+
+def load_stfpm(config):
+    from moviad.models.stfpm.stfpm import STFPM
+
+    teacher_feature_extractor = load_feature_extractor(config)
+    student_feature_extractor = load_feature_extractor(config)
+
+    # model init
+    model = STFPM(
+        teacher_feature_extractor,
+        student_feature_extractor
+    )
+
+    # load model
+    state_dict = torch.load(
+        config.save_path,
+        map_location=config.device,
+        weights_only=False
+    )
+    model.load_state_dict(state_dict, strict=False)
+
+    model.to(config.device)
+    model.eval()
+
+    return model
+
+
+def load_ssnet(config):
+    from moviad.models.supersimplenet.supersimplenet import SuperSimpleNet
+
+    feature_extractor = load_feature_extractor(config)
+
+    # model init
+    model = SuperSimpleNet(
+        feature_extractor
+    )
+
+    # load model
+    state_dict = torch.load(
+        config.save_path,
+        map_location=config.device,
+        weights_only=False
+    )
+    model.load_state_dict(state_dict, strict=False)
+
+    model.to(config.device)
+    model.eval()
+
+    return model
+
+
+def load_model(name: str, args):
+    name = name.lower()
+
+    if name == "padim":
+        return load_padim(args)
+    elif name == "patchcore":
+        return load_patchcore(args)
+    elif name == "fastflow":
+        return load_fastflow(args)
+    elif name == "cfa":
+        return load_cfa(args)
+    elif name == "dinomaly":
+        return load_dinomaly(args)
+    elif name == "stfpm":
+        return load_stfpm(args)
+    elif name == "rd4ad":
+        return load_rd4ad(args)
+    else:
+        raise ValueError(f"Unknown model: {name}")
 
 
 def run_forward(model, images):
     with torch.no_grad():
         return model(images)
+
+
+def sync_if_needed(device):
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+
+
+def reset_gpu_stats(device):
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+
+
+def get_gpu_peak(device):
+    if device.type == "cuda":
+        return torch.cuda.max_memory_allocated(device)
+    return -1
 
 
 def dynamic_profile(model, dataloader, device, num_batches=10):
@@ -105,14 +336,14 @@ def dynamic_profile(model, dataloader, device, num_batches=10):
     
     Args:
         model: loaded VAD model
-        dataloader: dataLoader for the profiling
+        dataloader: dataloader for the profiling
         device: model device
         num_batches: number of batches to profile
     """
     
     latencies = []
     cpu_mem_peaks = []
-    gpu_mem_peak = 0
+    gpu_mem_peak = -1
 
     # warm-up GPU and CPU
     images = next(iter(dataloader))[0].to(device)
@@ -127,32 +358,31 @@ def dynamic_profile(model, dataloader, device, num_batches=10):
 
         images = batch[0].to(device)
 
-        # reset GPU stats
-        torch.cuda.reset_peak_memory_stats(device)
+        reset_gpu_stats(device)
 
-        # forward pass
+        # latency
         with torch.no_grad():
-            torch.cuda.synchronize()
+            sync_if_needed(device)
             t0 = time.perf_counter()
-            _, _ = model(images)
-            torch.cuda.synchronize()
+
+            _ = model(images)
+
+            sync_if_needed(device)
             t1 = time.perf_counter()
 
-        # forward pass again for CPU peak memory measure
+        latencies.append((t1 - t0) / images.size(0))
+
+        # GPU memory
+        gpu_mem_peak = max(gpu_mem_peak, get_gpu_peak(device))
+
+        # CPU memory
         mem_trace = memory_usage(
             (run_forward, (model, images)),
-            interval=0.001,      # 1 ms sampling
+            interval=0.001,
             max_iterations=1,
             retval=False
         )
 
-        # latency per sample
-        latencies.append((t1 - t0) / images.size(0))
-
-        # GPU memory peak
-        gpu_mem_peak = max(gpu_mem_peak, torch.cuda.max_memory_allocated(device))
-
-        # CPU memory delta
         cpu_mem_peaks.append(max(mem_trace) - min(mem_trace))
 
     # report results
@@ -169,135 +399,128 @@ def dynamic_profile(model, dataloader, device, num_batches=10):
 
 
 def main(args):
-    batch_size = args.batch_size  # 32
-    save_path = args.save_path  # "output/padim/"
-    data_path = args.data_path  # "../datasets/mvtec/"
-    device = args.device  # "cuda:1"  # cuda:0, cuda:1, cuda:2, cpu
-    backbone_model_name = args.backbone_model_name  # "resnet18"
-    #save_figures = args.save_figures  # False
-    #results_dirpath = args.results_dirpath  # "metrics/padim/"
-    categories = args.categories
-    seeds = args.seeds
-    img_input_size = args.img_input_size
-    #output_size = args.output_size
-    ad_layers_idxs = args.ad_layers_idxs
+    device = torch.device(args.device)
+    seeds = args.seeds if isinstance(args.seeds, (list, tuple)) else [args.seeds]
 
     for seed in seeds:
+        import numpy as np
         random.seed(seed)
+        np.random.seed(seed)
         torch.manual_seed(seed)
         if "cuda" in device:
             torch.cuda.manual_seed_all(seed)
 
-        for category_name in categories:
+        # load model
+        model = load_model(args.model, args)
+        model.to(device)
 
-            print(
-                "class name:",
-                category_name,
-            )
+        print(f"[INFO] Loaded {args.model} | seed={seed}")
 
-            print("---- PaDiM Profiler ----")
+        from torchvision import transforms
+        from moviad.datasets.ad_datasets import AnoVoxDataset
 
-            # load the model if it was not trained in this run
-            padim = Padim(
-                backbone_model_name,
-                category_name,
-                device=device,
-                layers_idxs=ad_layers_idxs,
-            )
-            #path = padim.get_model_savepath(save_path)
-            padim.load_state_dict(
-                torch.load(save_path, map_location=device, weights_only=False), strict=False
-            )
-            padim.to(device)
-            print(f"Loaded model from path: {save_path}")
+        # define torchvision transformations
+        transform = transforms.Compose([
+            transforms.Resize(
+                (224,224),
+                antialias=True,
+            ),
+            transforms.ToTensor()
+        ])
+        sem_transform = transforms.Compose([
+            transforms.Resize(
+                (224,224),
+                antialias=True,
+                interpolation=transforms.InterpolationMode.NEAREST
+            ),
+            transforms.ToTensor()
+        ]) 
 
-            # evaluation mode
-            padim.eval()
+        test_dataset = AnoVoxDataset(
+            root_dir=args.dataset_path, 
+            mode="test", 
+            transform=transform, 
+            sem_transform=sem_transform
+        )
 
-            test_dataset = MVTecDataset(
-                TaskType.SEGMENTATION,
-                data_path,
-                category_name,
-                Split.TEST,
-                img_size=img_input_size,
-            )
+        test_dataloader = DataLoader(
+            test_dataset, 
+            batch_size=args.batch_size, 
+            pin_memory=True
+        )
 
-            test_dataset.load_dataset()
-
-            test_dataloader = DataLoader(
-                test_dataset, batch_size=batch_size, pin_memory=True
-            )
-
-            # static profile
-            #static_profile(model=padim, img_size=(224,224), batch_size=batch_size, device=device)
-            
-            # dynamic profile
-            dynamic_profile(model=padim, dataloader=test_dataloader, device=device, num_batches=1000)
+        # dynamic profile
+        dynamic_profile(
+            model=model, 
+            dataloader=test_dataloader, 
+            device=device, 
+            num_batches=getattr(args, "num_batches", 100)
+        )
 
 
 if __name__ == "__main__":
     import argparse
-
-    categories = [
-        "hazelnut",  # at the top because very large in memory, so we can check if it crashes
-        "bottle",
-        "cable",
-        "capsule",
-        "carpet",
-        "grid",
-        "leather",
-        "metal_nut",
-        "pill",
-        "screw",
-        "tile",
-        "toothbrush",
-        "transistor",
-        "wood",
-        "zipper",
-    ]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train", action="store_true")
-    parser.add_argument("--test", action="store_true")
-    parser.add_argument("--debug", action="store_true")
-    #parser.add_argument("--save_figures", action="store_true")
-    parser.add_argument("--save_logs", action="store_true")
+    parser.add_argument(
+        "--model", 
+        type=str, 
+        action="store_true", 
+        help="Supported models: cfa; dinomaly; fastflow; padim; patchcore; rd4ad; ssnet; stfpm"
+    )
     parser.add_argument(
         "--backbone_model_name",
         type=str,
-        help="resnet18, wide_resnet50_2, mobilenet_v2, mcunet-in3",
+        help="Supported backbones: mobilenet_v2; wide_resnet50_2; deit_small_distilled_patch16_224; deit_tiny_distilled_patch16_224",
     )
     parser.add_argument(
         "--img_input_size",
         type=int,
         default=(224, 224),
-        help="input image size, if None, default is used",
+        help="Input image size: if None, default is used",
     )
-    #parser.add_argument(
-    #    "--output_size",
-    #    type=int,
-    #    default=(224, 224),
-    #    help="output image size, if None, default is used",
-    #)
-    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument(
-        "--save_path", type=str, default=None, help="where to save the model checkpoint"
+        "--batch_size", 
+        type=int, 
+        default=32
     )
-    parser.add_argument("--data_path", type=str, default="../../datasets/mvtec/")
-    parser.add_argument("--device", type=str, default="cuda:1")
-    #parser.add_argument("--results_dirpath", type=str, default=None)
-    parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
-    parser.add_argument("--categories", type=str, nargs="+", default=categories)
+    parser.add_argument(
+        "--num_batches", 
+        type=int, 
+        default=1,
+        help="Number of batches used to profile the model"
+    )
+    parser.add_argument(
+        "--model_path", 
+        type=str, 
+        default=None, 
+        help="Model checkpoint path"
+    )
+    parser.add_argument(
+        "--dataset_path", 
+        type=str, 
+        default=None
+    )
+    parser.add_argument(
+        "--device", 
+        type=str, 
+        default="cuda:0",
+        help="cpu, cuda"
+    )
+    parser.add_argument(
+        "--seeds", 
+        type=int, 
+        nargs="+", 
+        default=[1, 2, 7]
+    )
     parser.add_argument(
         "--ad_layers_idxs",
         type=int,
         nargs="+",
         required=True,
-        help="list of layers idxs to use for feature extraction",
+        help="List of layers idxs to use for CNN feature extraction",
     )
 
     args = parser.parse_args()
 
-    log_filename = "padim.log"
-    s = "DEBUG " if args.debug else ""
-
+    print("---- VAD Model Profiler ----")
     main(args)
