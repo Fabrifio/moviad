@@ -325,7 +325,7 @@ def reset_gpu_stats(device):
 def get_gpu_peak(device):
     if device.type == "cuda":
         return torch.cuda.max_memory_allocated(device)
-    return -1
+    return 0
 
 
 def dynamic_profile(model, dataloader, device, num_batches=10):
@@ -343,7 +343,7 @@ def dynamic_profile(model, dataloader, device, num_batches=10):
     
     latencies = []
     cpu_mem_peaks = []
-    gpu_mem_peak = -1
+    gpu_mem_peak = 0
 
     # warm-up GPU and CPU
     images = next(iter(dataloader))[0].to(device)
@@ -386,16 +386,41 @@ def dynamic_profile(model, dataloader, device, num_batches=10):
         cpu_mem_peaks.append(max(mem_trace) - min(mem_trace))
 
     # report results
-    print("\n--- Profiling Results ---")
-    print(f"Average latency per sample: {sum(latencies)/len(latencies)*1000:.2f} ms")
-    print(f"Max CPU memory delta per batch: {max(cpu_mem_peaks):.2f} MB")
-    print(f"Max GPU memory usage: {gpu_mem_peak/1024**2:.2f} MB")
+    print("\n[INFO] --- Profiling Results ---")
+    print(f"[INFO] Average latency per sample: {sum(latencies)/len(latencies)*1000:.2f} ms")
+    print(f"[INFO] Max CPU memory delta per batch: {max(cpu_mem_peaks):.2f} MB")
+    print(f"[INFO] Max GPU memory usage: {gpu_mem_peak/1024**2:.2f} MB")
 
     return {
         "latencies_ms": [l*1000 for l in latencies],
         "cpu_mem_peaks_mb": cpu_mem_peaks,
         "gpu_mem_peak_mb": gpu_mem_peak / 1024**2,
     }
+
+
+def save_profile(results, args):
+    import os
+    import csv
+    
+    csv_path = "./outputs/profiles.csv"
+    fieldnames = ["model", "backbone_id", "latency_ms", "cpu_mem_mb", "gpu_mem_peak_mb", "device"]
+
+    file_exists = os.path.isfile(csv_path) and os.path.getsize(csv_path) > 0
+
+    with open(csv_path, mode='a', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames) 
+
+        if not file_exists:
+            writer.writeheader()    
+
+        writer.writerow({
+            "model": args.model,
+            "backbone_id": args.backbone_model_name,
+            "latency_ms": f"{(sum(results['latencies_ms'])/len(results['latencies_ms'])):.2f}",
+            "cpu_mem_mb": f"{max(results['cpu_mem_peaks_mb']):.2f}",
+            "gpu_mem_peak_mb": f"{results['gpu_mem_peak_mb']:.2f}",
+            "device" : args.device
+        })
 
 
 def main(args):
@@ -452,12 +477,17 @@ def main(args):
         print(f"[INFO] Loaded dataset \n[INFO] Starting profiling")
 
         # dynamic profile
-        dynamic_profile(
+        results = dynamic_profile(
             model=model, 
             dataloader=test_dataloader, 
             device=device, 
             num_batches=getattr(args, "num_batches", 1000)
         )
+
+        # save profile in csv
+        save_profile(results, args)
+
+        print(f"[INFO] Profile saved")
 
 
 if __name__ == "__main__":
@@ -524,5 +554,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    print("---- VAD Model Profiler ----")
+    print("[INFO] ---- VAD Model Profiler ----")
     main(args)

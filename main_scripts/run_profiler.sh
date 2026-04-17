@@ -33,7 +33,7 @@ for MODEL in "${MODELS[@]}"; do
           --img_input_size ${IMG_SIZE[0]} ${IMG_SIZE[1]} \
           --save_path "/home/fgenilotti/Downloads/padim_mobile.pt"
 
-        echo "Completed run ${RUN} for ${MODEL}"
+        echo "[INFO] Completed run ${RUN} for ${MODEL}"
         echo "----------------------------------------------------"
 
       done
