@@ -386,10 +386,10 @@ def dynamic_profile(model, dataloader, device, num_batches=10):
         cpu_mem_peaks.append(max(mem_trace) - min(mem_trace))
 
     # report results
-    print("\n[INFO] --- Profiling Results ---")
-    print(f"[INFO] Average latency per sample: {sum(latencies)/len(latencies)*1000:.2f} ms")
-    print(f"[INFO] Max CPU memory delta per batch: {max(cpu_mem_peaks):.2f} MB")
-    print(f"[INFO] Max GPU memory usage: {gpu_mem_peak/1024**2:.2f} MB")
+    print("\n --- Profiling Results ---")
+    print(f"Average latency per sample:     {sum(latencies)/len(latencies)*1000:>8.2f} ms")
+    print(f"Max CPU memory delta per batch: {max(cpu_mem_peaks):>8.2f} MB")
+    print(f"Max GPU memory usage:           {gpu_mem_peak/1024**2:>8.2f} MB")
 
     return {
         "latencies_ms": [l*1000 for l in latencies],
@@ -403,7 +403,7 @@ def save_profile(results, args):
     import csv
     
     csv_path = "./outputs/profiles.csv"
-    fieldnames = ["model", "backbone_id", "latency_ms", "cpu_mem_mb", "gpu_mem_peak_mb", "device"]
+    fieldnames = ["model", "backbone_id", "ad_layers", "latency_ms", "cpu_mem_mb", "gpu_mem_peak_mb", "num_batches", "batch_size", "device"]
 
     file_exists = os.path.isfile(csv_path) and os.path.getsize(csv_path) > 0
 
@@ -416,9 +416,12 @@ def save_profile(results, args):
         writer.writerow({
             "model": args.model,
             "backbone_id": args.backbone_model_name,
+            "ad_layers": args.ad_layers_idxs,
             "latency_ms": f"{(sum(results['latencies_ms'])/len(results['latencies_ms'])):.2f}",
             "cpu_mem_mb": f"{max(results['cpu_mem_peaks_mb']):.2f}",
             "gpu_mem_peak_mb": f"{results['gpu_mem_peak_mb']:.2f}",
+            "num_batches": args.num_batches,
+            "batch_size": args.batch_size,
             "device" : args.device
         })
 
@@ -522,7 +525,7 @@ if __name__ == "__main__":
         help="Number of batches used to profile the model"
     )
     parser.add_argument(
-        "--model_path", 
+        "--save_path", 
         type=str, 
         default=None, 
         help="Model checkpoint path"
@@ -554,5 +557,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    print("[INFO] ---- VAD Model Profiler ----")
+    print("[INFO] --- VAD Model Profiler ---")
     main(args)
