@@ -179,7 +179,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--mode", type=str, default="train", choices=["train", "test"], help="Script execution mode: train or test")
-    parser.add_argument("--model-mode", type=str, default="default", choices=["std", "diag", "sr"], help="Padim model mode. Standard: = 'std'; Diagonal = 'diag'; Super-Rank = 'sr'")
+    parser.add_argument("--model-mode", type=str, default="default", choices=["std", "lite", "lr"], help="Padim model mode. Standard: = 'std' or ''; Diagonal = 'lite'; Low-Rank = 'lr'")
     parser.add_argument("--backbone-id", type=str, default=None, help="resnet18, wide_resnet50_2, mobilenet_v2, mcunet-in3")
     parser.add_argument("--ad_layers", type=int, nargs="+", required=True, help="list of layers idxs to use for feature extraction")
     parser.add_argument("--input_size", type=tuple[int], default=(224, 224), help="input image size, if None, default is used")

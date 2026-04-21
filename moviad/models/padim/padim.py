@@ -175,14 +175,14 @@ class Padim(nn.Module):
         # 2. use the feature maps to get the embeddings
         embedding_vectors = self.raw_feature_maps_to_embeddings(layer_outputs)
         # 3. compute the distance matrix
-        if self.model_mode == "std":
+        if self.model_mode == "std" or self.model_mode == "":
             dist_list = self.compute_distances(embedding_vectors)
-        elif self.model_mode == "diag":
+        elif self.model_mode == "lite":
             dist_list = self.compute_distances_diagonal(embedding_vectors)
-        elif self.model_mode == "sr":
-            dist_list = self.compute_distance_sr(embedding_vectors)
+        elif self.model_mode == "lr":
+            dist_list = self.compute_distances_lr(embedding_vectors)
         else:
-            raise NotImplementedError(f"Padim '{self.mode}' mode not supported.")
+            raise NotImplementedError(f"Padim '{self.model_mode}' mode not supported.")
         
         # 4. upsample
         score_map = (
@@ -233,7 +233,7 @@ class Padim(nn.Module):
             self.gauss_mean, self.diagonal_gauss_cov = mean, diagonal_cov
         return mean, diagonal_cov
     
-    def fit_pca_sr(self, embedding_vectors: torch.Tensor, update_params=True):
+    def fit_pca_lr(self, embedding_vectors: torch.Tensor, update_params=True):
         """
         Fit a multivariate Gaussian distribution to the set of given embedding vectors,
         assuming given diagonal covariance matrix, using additional PCA eigenvectors 
@@ -386,7 +386,7 @@ class Padim(nn.Module):
         distances = distances.reshape(B, H, W)
         return torch.tensor(distances)
     
-    def compute_distance_sr(self, embedding_vectors: torch.Tensor):
+    def compute_distances_lr(self, embedding_vectors: torch.Tensor):
         """
         Compute the Mahalanobis distances between the embedding vectors and the
         multivariate Gaussian distribution.

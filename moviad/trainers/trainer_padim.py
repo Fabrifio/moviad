@@ -56,13 +56,13 @@ class TrainerPadim(Trainer):
         embedding_vectors = self.model.raw_feature_maps_to_embeddings(layer_outputs)
         
         # 3. fit the multivariate Gaussian distribution
-        if self.model_mode == "std":
+        if self.model_mode == "std" or self.model_mode == "":
             self.model.fit_multivariate_gaussian(embedding_vectors, update_params=True, logger=self.logger)
-        elif self.model_mode == "diag":
+        elif self.model_mode == "lite":
             self.model.fit_multivariate_diagonal_gaussian(embedding_vectors, update_params=True, logger=self.logger)
-        elif self.model_mode == "sr":
+        elif self.model_mode == "lr":
             self.model.fit_multivariate_diagonal_gaussian(embedding_vectors, update_params=True, logger=self.logger)
-            self.model.fit_pca_sr(embedding_vectors, update_params=True)
+            self.model.fit_pca_lr(embedding_vectors, update_params=True)
 
         metrics = {
             "img_roc_auc": 0.1,
