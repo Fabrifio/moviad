@@ -442,7 +442,7 @@ def main(args):
         model = load_model(args.model, args)
         model.to(device)
 
-        print(f"[INFO] Loaded {args.model} | seed={seed}")
+        print(f"[INFO] Loaded {args.model}")
 
         from torchvision import transforms
         from moviad.datasets.ad_datasets import AnoVoxDataset
