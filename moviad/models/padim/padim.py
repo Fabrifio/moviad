@@ -421,3 +421,138 @@ class Padim(nn.Module):
 
         distances = distances.reshape(B, H, W)
         return torch.tensor(distances)
+
+    # --------------------------------------------------
+    # ----------- FA-EM-LR VERSION PROTOTYPE ----------- 
+    # --------------------------------------------------
+    
+    # TODO: change names of low-rank vectors data structure, rank level 
+
+    def fit_fa_lowrank(
+        self,
+        embedding_vectors: torch.Tensor,
+        update_params=True,
+        em_steps=1,   # set to 0 for pure FA-lite
+    ):
+        B, C, H, W = embedding_vectors.size()
+        HW = H * W
+
+        X = embedding_vectors.view(B, C, HW).cpu().numpy()
+
+        fa_U = np.zeros((C, self.pca_rank, HW), dtype=np.float32)
+        fa_D = np.zeros((C, HW), dtype=np.float32)                
+
+        eps = 1e-6
+
+        for i in range(HW):
+
+            # -covariance
+            cov = np.cov(X[:, :, i], rowvar=False) + eps * np.eye(C)
+
+            # eigen decomposition
+            eigvals, eigvecs = np.linalg.eigh(cov)
+            idx = np.argsort(eigvals)[::-1]
+
+            eigvals = eigvals[idx]
+            eigvecs = eigvecs[:, idx]
+
+            k = self.pca_rank
+
+            # noise variance
+            if k < C:
+                sigma2 = np.mean(eigvals[k:])
+            else:
+                sigma2 = 0.0
+
+            # FA initialization
+            lam = np.maximum(eigvals[:k] - sigma2, eps)
+            U = eigvecs[:, :k] * np.sqrt(lam)[None, :]   # [C, k]
+
+            D = np.diag(cov - U @ U.T)
+            D = np.maximum(D, eps)
+
+            # EM refinement (optional)
+            for _ in range(em_steps):
+
+                invD = 1.0 / D
+
+                # M = (I + U^T D^{-1} U)^(-1)
+                M = np.linalg.inv(np.eye(k) + (U.T * invD[None, :]) @ U)
+
+                # Expected latent covariance
+                Ezx = M @ (U.T * invD[None, :]) @ cov
+
+                # cross-covariance
+                Sigma_xz = cov @ (invD[:, None] * U) @ M
+                Sigma_zz = M
+
+                # Update U
+                U = Sigma_xz @ np.linalg.inv(Sigma_zz + eps * np.eye(k))  # [C, k]
+
+                # Update D
+                recon = U @ Ezx
+                D = np.diag(cov - recon)
+                D = np.maximum(D, eps)
+
+            fa_U[:, :, i] = U
+            fa_D[:, i] = D
+
+        if update_params:
+            self.pca_vecs = fa_U              # [C, k, HW]
+            self.diagonal_gauss_cov = fa_D    # [C, HW]
+
+        return fa_U, fa_D
+    
+
+    def compute_distances_faemlr(self, embedding_vectors: torch.Tensor):
+
+        B, C, H, W = embedding_vectors.shape
+        HW = H * W
+
+        X = embedding_vectors.view(B, C, HW).cpu().numpy()
+
+        mean = self.gauss_mean[None, :, :]             # [1, C, HW]
+        diag_cov = self.diagonal_gauss_cov[None, :, :] # [1, C, HW]
+        diff = X - mean                                # [B, C, HW]
+
+        inv_diag = 1.0 / (diag_cov + 1e-8)             # [1, C, HW]
+
+        # diagonal distance term
+        d_diag = np.sum(diff**2 * inv_diag, axis=1)    # [B, HW]
+
+        # faem low-rank vectors 
+        U = self.pca_vecs   # CHANGE NAME              # [r, C, HW]
+        r = U.shape[1]
+
+        d_low = np.zeros((B, HW), dtype=np.float32)
+
+        for h in range(HW):
+
+            u = U[:, :, h].T                           # [r, C]
+            inv_d = inv_diag[0, :, h]                  # [C]
+            d = diff[:, :, h]                          # [B, C]
+
+            Ainv_uT = (inv_d[:, None] * u.T)           # [C, r]
+
+            middle = u @ Ainv_uT                       # [r, r]
+
+            # (I + u D^{-1} u^T)^{-1}
+            middle_inv = np.linalg.inv(
+                np.eye(r, dtype=np.float32) + middle
+            )                                          # [r, r]
+
+            dAinv = d * inv_d                          # [B, C]
+
+            proj = dAinv @ u.T                         # [B, r]
+
+            d_low[:, h] = np.sum(
+                (proj @ middle_inv) * proj,
+                axis=1
+            )
+
+        # malahanobis distance
+        distances = d_diag - d_low
+        distances = np.sqrt(np.maximum(distances, 0.0))
+        distances = distances.reshape(B, H, W)
+
+        return torch.tensor(distances)
