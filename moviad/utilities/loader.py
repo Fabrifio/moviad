@@ -9,13 +9,17 @@ class ModelConfig:
     backbone: str
     ad_layers: List[str]
     device: str
+    img_input_size: int = 224
+    save_path: str = None
 
 
-def get_model_config(backbone: str, ad_layers: list, device: str) -> ModelConfig:
+def get_model_config(backbone: str, ad_layers: list, device: str, img_input_size: int = 224, save_path: str = None) -> ModelConfig:
     return ModelConfig(
         backbone=backbone,
         ad_layers=ad_layers,
-        device=device
+        device=device,
+        img_input_size=img_input_size,
+        save_path=save_path
     )
 
 
