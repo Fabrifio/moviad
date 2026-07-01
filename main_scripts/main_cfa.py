@@ -14,7 +14,7 @@ from moviad.trainers.trainer_cfa import TrainerCFA
 from moviad.utilities.configurations import TaskType
 from moviad.utilities.evaluator import Evaluator
 from moviad.utilities.helper import set_seed, get_ad_layers_ids
-from moviad.utilities.loader import load_feature_extractor, get_model_config
+from moviad.utilities.loader import load_feature_extractor, get_model_config, load_model
 
 def main_train_cfa(dataset_path: str, category: str, backbone: str, ad_layers: list,
                    epochs: int, save_path: str, device: torch.device):
@@ -63,6 +63,9 @@ def main_test_cfa(dataset_path: str, category: str, backbone: str, ad_layers: li
     cfa_model.load_model(model_checkpoint_path)
     cfa_model.to(device)
     cfa_model.eval()
+
+    # alternative loading method
+    # cfa_model = load_model("cfa", get_model_config(backbone, ad_layers, device, save_path=model_checkpoint_path))
 
     evaluator = Evaluator(test_dataloader, device)
     img_roc, pxl_roc, f1_img, f1_pxl, img_pr, pxl_pr, pxl_pro = evaluator.evaluate(cfa_model)
