@@ -21,8 +21,8 @@ OUTPUT_SIZE = (224, 224)
 
 def main(args):
     mode = args.mode
-    model_mode = args.model_mode
-    backbone_id = args.backbone_id
+    variant = args.variant
+    backbone = args.backbone
     input_size = args.input_size
     output_size = args.output_size
     ad_layers = args.ad_layers
@@ -49,10 +49,10 @@ def main(args):
                 print("---- PaDiM train ----")
 
                 padim = Padim(
-                    backbone_id,
+                    backbone,
                     category_name,
                     device=device,
-                    model_mode=model_mode,
+                    variant=variant,
                     layers_idxs=ad_layers,
                 )
                 padim.to(device)
@@ -91,7 +91,7 @@ def main(args):
                     test_dataloader=test_dataloader,
                     device=device,
                     save_path=save_path,
-                    model_mode=model_mode,
+                    variant=variant,
                 )
 
                 trainer.train()
@@ -110,9 +110,10 @@ def main(args):
                 # load the model if it was not trained in this run
                 if not args.train:
                     padim = Padim(
-                        backbone_id,
+                        backbone,
                         category_name,
                         device=device,
+                        variant=variant,
                         layers_idxs=ad_layers,
                     )
                     path = padim.get_model_savepath(save_path)
@@ -146,7 +147,7 @@ def main(args):
 
                 if results_dirpath is not None:
                     metrics_savefile = Path(
-                        results_dirpath, f"metrics_{backbone_id}.csv"
+                        results_dirpath, f"metrics_{backbone}.csv"
                     )
                     # check if the metrics path exists
                     dirpath = os.path.dirname(metrics_savefile)
@@ -161,7 +162,7 @@ def main(args):
                         *scores.values(),
                         "padim",  # ad_model
                         ad_layers,
-                        backbone_id,
+                        backbone,
                         "IMAGENET1K_V2",  # NOTE: hardcoded, should be changed
                         None,  # bootstrap_layer
                         -1,  # epochs (not used)
@@ -179,8 +180,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--mode", type=str, default="train", choices=["train", "test"], help="Script execution mode: train or test")
-    parser.add_argument("--model-mode", type=str, default="default", choices=["std", "lite", "lr"], help="Padim model mode. Standard: = 'std' or ''; Diagonal = 'lite'; Low-Rank = 'lr'")
-    parser.add_argument("--backbone-id", type=str, default=None, help="resnet18, wide_resnet50_2, mobilenet_v2, mcunet-in3")
+    parser.add_argument("--variant", type=str, default="standard", choices=["standard", "lite", "low-rank"], help="Model variant to use")
+    parser.add_argument("--backbone", type=str, default=None, help="resnet18, wide_resnet50_2, mobilenet_v2, mcunet-in3")
     parser.add_argument("--ad_layers", type=int, nargs="+", required=True, help="list of layers idxs to use for feature extraction")
     parser.add_argument("--input_size", type=tuple[int], default=(224, 224), help="input image size, if None, default is used")
     parser.add_argument("--output_size", type=tuple[int], default=(224, 224), help="output image size, if None, default is used")

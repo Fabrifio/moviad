@@ -74,7 +74,7 @@ class Padim(nn.Module):
             class_name,
             device,
             layers_idxs: list,
-            model_mode="std",
+            variant="standard",
     ):
         """
         Args:
@@ -82,14 +82,14 @@ class Padim(nn.Module):
             save_path: path to save the model and the extracted features
             class_name: one of the following strings: 'bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut',
                 'leather', 'metal_nut', 'pill', 'screw', 'tile', 'toothbrush', 'transistor', 'wood', 'zipper'
-            mode: string identifying padim model mode: standard = 'std'; diagonal = 'diag' to keep only the diagonal elements of the covariance matrices;
-                Super-Rank = 'sr' to keep the diagonal covariance and an arbitrary number of PCA eigenvectors and values.
+            variant: string identifying padim model mode: standard = 'standard'; diagonal = 'lite' to keep only the diagonal elements of the covariance matrices;
+                Low-Rank = 'low-rank' to keep the diagonal covariance and its low-rank approximation.
         """
         super(Padim, self).__init__()
         self.diagonal_gauss_cov = None
         self.class_name = class_name
         self.device = device
-        self.model_mode = model_mode
+        self.variant = variant
         # feature extractor backbone model
         self.backbone_model_name = backbone_model_name
         self.layers_idxs = layers_idxs
@@ -175,14 +175,14 @@ class Padim(nn.Module):
         # 2. use the feature maps to get the embeddings
         embedding_vectors = self.raw_feature_maps_to_embeddings(layer_outputs)
         # 3. compute the distance matrix
-        if self.model_mode == "std" or self.model_mode == "":
+        if self.variant == "standard" or self.variant == "":
             dist_list = self.compute_distances(embedding_vectors)
-        elif self.model_mode == "lite":
+        elif self.variant == "lite":
             dist_list = self.compute_distances_diagonal(embedding_vectors)
-        elif self.model_mode == "lr":
+        elif self.variant == "low-rank":
             dist_list = self.compute_distances_lr(embedding_vectors)
         else:
-            raise NotImplementedError(f"Padim '{self.model_mode}' mode not supported.")
+            raise NotImplementedError(f"Padim '{self.variant}' variant not supported.")
         
         # 4. upsample
         score_map = (

@@ -29,6 +29,7 @@ for CATEGORY in "${CATEGORIES[@]}"; do
         --data_path "${DATA_PATH}" \
         --categories "${CATEGORY}" \
         --backbone mobilenet_v2 \
+        --variant standard \
         --ad_layers 10 13 16 \
         --device cuda:0 \
         --seeds "${SEED}" \
