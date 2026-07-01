@@ -27,7 +27,7 @@ for MODEL in "${MODELS[@]}"; do
         python main_scripts/profiler.py \
           --model "${MODEL}" \
           --dataset_path "${DATASET_PATH}" \
-          --backbone_model_name "${BACKBONE}" \
+          --backbone "${BACKBONE}" \
           --ad_layers_idxs "${AD_LAYERS[@]}" \
           --device cpu \
           --seeds "${SEED}" \

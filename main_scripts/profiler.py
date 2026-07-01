@@ -7,10 +7,10 @@ import torch
 from torch.utils.data import DataLoader
 
 
-def idx_to_layer_name(backbone_model_name: str, idx: int) -> str | int:
-    if backbone_model_name in ["wide_resnet50_2"]:
+def idx_to_layer_name(backbone: str, idx: int) -> str | int:
+    if backbone in ["wide_resnet50_2"]:
         return f"layer{idx}"
-    elif backbone_model_name == "mobilenet_v2":
+    elif backbone == "mobilenet_v2":
         return f"features.{idx}"
     else:
         return idx
@@ -23,7 +23,7 @@ def load_feature_extractor(config):
     CNN_BACKBONES = ["mobilenet_v2", "wide_resnet50_2"]
     VIT_BACKBONES = ["deit_small_distilled_patch16_224", "deit_tiny_distilled_patch16_224"]
 
-    backbone = config.backbone_model_name
+    backbone = config.backbone
     device = config.device
 
     # CNN feature extractor
@@ -64,7 +64,7 @@ def load_padim(config):
 
     # model init
     model = Padim(
-        config.backbone_model_name,
+        config.backbone,
         None,
         device=config.device,
         layers_idxs=config.ad_layers_idxs,
@@ -124,11 +124,11 @@ def load_dinomaly(config):
         "deit_small_16": {"embed_dim": 384, "num_heads": 6},
         "deit_base_16": {"embed_dim": 768, "num_heads": 12},
     }
-    embed_dim = DEIT_CONFIGS[config.backbone_model_name]["embed_dim"]
-    num_heads = DEIT_CONFIGS[config.backbone_model_name]["num_heads"] 
+    embed_dim = DEIT_CONFIGS[config.backbone]["embed_dim"]
+    num_heads = DEIT_CONFIGS[config.backbone]["num_heads"] 
 
     # encoder vit
-    encoder = vit_encoder.load(config.backbone_model_name)
+    encoder = vit_encoder.load(config.backbone)
     encoder.to(config.device)
 
     # bottleneck
@@ -175,7 +175,7 @@ def load_fastflow(config):
     # model init
     model = create_fastflow(
         config.img_input_size,
-        config.backbone_model_name,
+        config.backbone,
         None,
         None,
         device=config.device
@@ -196,7 +196,7 @@ def load_rd4ad(config):
 
     # model init
     model = RD4AD(
-        config.backbone_model_name,
+        config.backbone,
         config.device,
         input_size=config.img_input_size
     )
@@ -223,7 +223,7 @@ def load_cfa(config):
     # model init
     model = CFA(
         feature_extractor, 
-        config.backbone_model_name, 
+        config.backbone, 
         config.device
     )
 
@@ -415,7 +415,7 @@ def save_profile(results, args):
 
         writer.writerow({
             "model": args.model,
-            "backbone_id": args.backbone_model_name,
+            "backbone_id": args.backbone,
             "ad_layers": args.ad_layers_idxs,
             "latency_ms": f"{(sum(results['latencies_ms'])/len(results['latencies_ms'])):.2f}",
             "cpu_mem_mb": f"{max(results['cpu_mem_peaks_mb']):.2f}",
@@ -502,7 +502,7 @@ if __name__ == "__main__":
         help="Supported models: cfa; dinomaly; fastflow; padim; patchcore; rd4ad; ssnet; stfpm"
     )
     parser.add_argument(
-        "--backbone_model_name",
+        "--backbone",
         type=str,
         help="Supported backbones: mobilenet_v2; wide_resnet50_2; deit_small_distilled_patch16_224; deit_tiny_distilled_patch16_224",
     )

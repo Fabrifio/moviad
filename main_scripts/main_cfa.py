@@ -4,6 +4,7 @@ import pathlib
 
 import torch
 from torch.utils.data.dataset import Dataset
+import numpy as np
 from tqdm import tqdm
 
 from moviad.datasets.mvtec.mvtec_dataset import MVTecDataset
@@ -12,7 +13,8 @@ from moviad.models.cfa.cfa import CFA
 from moviad.trainers.trainer_cfa import TrainerCFA
 from moviad.utilities.configurations import TaskType
 from moviad.utilities.evaluator import Evaluator
-
+from moviad.utilities.helper import set_seed, get_ad_layers_ids
+from moviad.utilities.loader import load_feature_extractor
 
 def main_train_cfa(dataset_path: str, category: str, backbone: str, ad_layers: list,
                    epochs: int, save_path: str, device: torch.device):
@@ -31,18 +33,19 @@ def main_train_cfa(dataset_path: str, category: str, backbone: str, ad_layers: l
     print(f"Length test dataset: {len(test_dataset)}")
     test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=2, shuffle=True, drop_last=True)
 
+    ad_layers = get_ad_layers_ids(backbone, ad_layers)
     feature_extractor = CustomFeatureExtractor(backbone, ad_layers, device)
 
     cfa_model = CFA(feature_extractor, backbone, device)
     cfa_model.initialize_memory_bank(train_dataloader)
     cfa_model = cfa_model.to(device)
 
-    trainer = TrainerCFA(cfa_model, backbone, feature_extractor, train_dataloader, test_dataloader, category, device)
-    trainer.train(epochs)
+    trainer = TrainerCFA(cfa_model, feature_extractor, train_dataloader, test_dataloader, device)
+    trainer.train(epochs, evaluation_epoch_interval=3)
 
     # save the model
-    if save_path:
-        torch.save(cfa_model.state_dict(), save_path)
+    #if save_path:
+    #    torch.save(cfa_model.state_dict(), save_path)
 
 
 def main_test_cfa(dataset_path: str, category: str, backbone: str, ad_layers: list, model_checkpoint_path: str,
@@ -56,6 +59,7 @@ def main_test_cfa(dataset_path: str, category: str, backbone: str, ad_layers: li
     test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=True)
 
     # load the model
+    ad_layers = get_ad_layers_ids(backbone, ad_layers)
     feature_extractor = CustomFeatureExtractor(backbone, ad_layers, device, True, False, None)
     cfa_model = CFA(feature_extractor, backbone, device)
     cfa_model.load_model(model_checkpoint_path)
@@ -110,8 +114,8 @@ def main():
 
     args = parser.parse_args()
 
-    torch.manual_seed(args.seed)
-    random.seed = args.seed
+    set_seed(args.seed)
+    
     device = torch.device(args.device)
 
     if args.mode == "train":
