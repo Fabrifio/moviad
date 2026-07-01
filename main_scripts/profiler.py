@@ -28,12 +28,12 @@ def load_feature_extractor(config):
 
     # CNN feature extractor
     if backbone in CNN_BACKBONES:
-        if not hasattr(config, "ad_layers_idxs"):
-            raise ValueError(f"{backbone} requires ad_layers_idxs")
+        if not hasattr(config, "ad_layers"):
+            raise ValueError(f"{backbone} requires ad_layers")
 
         ad_layers = [
             idx_to_layer_name(backbone, idx)
-            for idx in config.ad_layers_idxs
+            for idx in config.ad_layers
         ]
 
         feature_extractor = CustomFeatureExtractor(
@@ -67,7 +67,7 @@ def load_padim(config):
         config.backbone,
         None,
         device=config.device,
-        layers_idxs=config.ad_layers_idxs,
+        layers_idxs=config.ad_layers,
     )
 
     # load model
@@ -416,7 +416,7 @@ def save_profile(results, args):
         writer.writerow({
             "model": args.model,
             "backbone_id": args.backbone,
-            "ad_layers": args.ad_layers_idxs,
+            "ad_layers": args.ad_layers,
             "latency_ms": f"{(sum(results['latencies_ms'])/len(results['latencies_ms'])):.2f}",
             "cpu_mem_mb": f"{max(results['cpu_mem_peaks_mb']):.2f}",
             "gpu_mem_peak_mb": f"{results['gpu_mem_peak_mb']:.2f}",
@@ -548,7 +548,7 @@ if __name__ == "__main__":
         default=[1, 2, 7]
     )
     parser.add_argument(
-        "--ad_layers_idxs",
+        "--ad_layers",
         type=int,
         nargs="+",
         required=True,

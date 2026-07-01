@@ -28,7 +28,7 @@ for MODEL in "${MODELS[@]}"; do
           --model "${MODEL}" \
           --dataset_path "${DATASET_PATH}" \
           --backbone "${BACKBONE}" \
-          --ad_layers_idxs "${AD_LAYERS[@]}" \
+          --ad_layers "${AD_LAYERS[@]}" \
           --device cpu \
           --seeds "${SEED}" \
           --batch_size "${BATCH_SIZE}" \
