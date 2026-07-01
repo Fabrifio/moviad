@@ -33,8 +33,6 @@ def main_train_cfa(dataset_path: str, category: str, backbone: str, ad_layers: l
     print(f"Length test dataset: {len(test_dataset)}")
     test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=2, shuffle=True, drop_last=True)
 
-    #ad_layers = get_ad_layers_ids(backbone, ad_layers)
-    #feature_extractor = CustomFeatureExtractor(backbone, ad_layers, device)
     feature_extractor = load_feature_extractor(get_model_config(backbone, ad_layers, device))
 
     cfa_model = CFA(feature_extractor, backbone, device)
@@ -45,8 +43,8 @@ def main_train_cfa(dataset_path: str, category: str, backbone: str, ad_layers: l
     trainer.train(epochs, evaluation_epoch_interval=3)
 
     # save the model
-    #if save_path:
-    #    torch.save(cfa_model.state_dict(), save_path)
+    if save_path:
+        torch.save(cfa_model.state_dict(), save_path)
 
 
 def main_test_cfa(dataset_path: str, category: str, backbone: str, ad_layers: list, model_checkpoint_path: str,
@@ -60,8 +58,6 @@ def main_test_cfa(dataset_path: str, category: str, backbone: str, ad_layers: li
     test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=True)
 
     # load the model
-    #ad_layers = get_ad_layers_ids(backbone, ad_layers)
-    #feature_extractor = CustomFeatureExtractor(backbone, ad_layers, device, True, False, None)
     feature_extractor = load_feature_extractor(get_model_config(backbone, ad_layers, device))
     cfa_model = CFA(feature_extractor, backbone, device)
     cfa_model.load_model(model_checkpoint_path)
