@@ -1,4 +1,22 @@
+from typing import List
+from dataclasses import dataclass
+
 import torch
+
+
+@dataclass
+class ModelConfig:
+    backbone: str
+    ad_layers: List[str]
+    device: str
+
+
+def get_model_config(backbone: str, ad_layers: list, device: str) -> ModelConfig:
+    return ModelConfig(
+        backbone=backbone,
+        ad_layers=ad_layers,
+        device=device
+    )
 
 
 def load_feature_extractor(config):
@@ -14,12 +32,12 @@ def load_feature_extractor(config):
 
     # CNN feature extractor
     if backbone in CNN_BACKBONES:
-        if not hasattr(config, "ad_layers_idxs"):
-            raise ValueError(f"{backbone} requires ad_layers_idxs")
+        if not hasattr(config, "ad_layers"):
+            raise ValueError(f"{backbone} requires ad_layers")
 
         ad_layers = [
             idx_to_layer_name(backbone, idx)
-            for idx in config.ad_layers_idxs
+            for idx in config.ad_layers
         ]
 
         feature_extractor = CustomFeatureExtractor(
@@ -53,7 +71,7 @@ def load_padim(config):
         config.backbone,
         None,
         device=config.device,
-        layers_idxs=config.ad_layers_idxs,
+        layers_idxs=config.ad_layers,
     )
 
     # load model

@@ -14,7 +14,7 @@ from moviad.trainers.trainer_cfa import TrainerCFA
 from moviad.utilities.configurations import TaskType
 from moviad.utilities.evaluator import Evaluator
 from moviad.utilities.helper import set_seed, get_ad_layers_ids
-from moviad.utilities.loader import load_feature_extractor
+from moviad.utilities.loader import load_feature_extractor, get_model_config
 
 def main_train_cfa(dataset_path: str, category: str, backbone: str, ad_layers: list,
                    epochs: int, save_path: str, device: torch.device):
@@ -33,8 +33,9 @@ def main_train_cfa(dataset_path: str, category: str, backbone: str, ad_layers: l
     print(f"Length test dataset: {len(test_dataset)}")
     test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=2, shuffle=True, drop_last=True)
 
-    ad_layers = get_ad_layers_ids(backbone, ad_layers)
-    feature_extractor = CustomFeatureExtractor(backbone, ad_layers, device)
+    #ad_layers = get_ad_layers_ids(backbone, ad_layers)
+    #feature_extractor = CustomFeatureExtractor(backbone, ad_layers, device)
+    feature_extractor = load_feature_extractor(get_model_config(backbone, ad_layers, device))
 
     cfa_model = CFA(feature_extractor, backbone, device)
     cfa_model.initialize_memory_bank(train_dataloader)
@@ -59,8 +60,9 @@ def main_test_cfa(dataset_path: str, category: str, backbone: str, ad_layers: li
     test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=True)
 
     # load the model
-    ad_layers = get_ad_layers_ids(backbone, ad_layers)
-    feature_extractor = CustomFeatureExtractor(backbone, ad_layers, device, True, False, None)
+    #ad_layers = get_ad_layers_ids(backbone, ad_layers)
+    #feature_extractor = CustomFeatureExtractor(backbone, ad_layers, device, True, False, None)
+    feature_extractor = load_feature_extractor(get_model_config(backbone, ad_layers, device))
     cfa_model = CFA(feature_extractor, backbone, device)
     cfa_model.load_model(model_checkpoint_path)
     cfa_model.to(device)
