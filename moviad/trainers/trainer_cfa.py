@@ -72,6 +72,7 @@ class TrainerCFA(Trainer):
         best_metrics["pxl_pr_auc"] = 0
         best_metrics["pxl_au_pro"] = 0
 
+        self.logger = None
         if self.logger is not None:
             self.logger.config.update(
                 {
@@ -111,7 +112,7 @@ class TrainerCFA(Trainer):
                 print("Evaluating model...")
                 metrics = self.evaluator.evaluate(self.model)
 
-                if self.saving_criteria(best_metrics, metrics) and self.save_path is not None:
+                if self.saving_criteria is not None and self.saving_criteria(best_metrics, metrics) and self.save_path is not None:
                     print("Saving model...")
                     torch.save(self.model.state_dict(), self.save_path)
                     print(f"Model saved to {self.save_path}")
