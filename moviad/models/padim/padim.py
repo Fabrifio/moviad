@@ -62,7 +62,7 @@ class Padim(nn.Module):
         "gauss_mean",
         "gauss_cov",
         "diagonal_gauss_cov",
-        "model_mode",
+        "variant",
         "layers_idxs",
         "pca_vars",
         "pca_vecs",
@@ -561,48 +561,81 @@ class Padim(nn.Module):
     def compute_distances_faemlr_v2(self, embedding_vectors: torch.Tensor):
         device = embedding_vectors.device
         dtype = embedding_vectors.dtype
-        
+
         B, C, H, W = embedding_vectors.shape
         HW = H * W
 
-
+        # [B, C, HW]
         X = embedding_vectors.view(B, C, HW)
 
-        mean = self.gauss_mean.unsqueeze(0)             # [1, C, HW]
-        diag_cov = self.diagonal_gauss_cov.unsqueeze(0) # [1, C, HW]
-        diff = X - mean                                 # [B, C, HW]
+        # Convert stored statistics to tensors
+        mean = torch.as_tensor(
+            self.gauss_mean,
+            device=device,
+            dtype=dtype,
+        ).unsqueeze(0)                                    # [1, C, HW]
 
-        inv_diag = 1.0 / (diag_cov + 1e-8)              # [1, C, HW]
+        diag_cov = torch.as_tensor(
+            self.diagonal_gauss_cov,
+            device=device,
+            dtype=dtype,
+        ).unsqueeze(0)                                    # [1, C, HW]
 
-        d_diag = torch.sum(diff**2 * inv_diag, dim=1)    # [B, HW]
+        U = torch.as_tensor(
+            self.pca_vecs,
+            device=device,
+            dtype=dtype,
+        )                                                 # [C, r, HW]
 
-        u = self.pca_vecs.permute(2, 0, 1)              # [HW, r, C]
+        # Difference
+        diff = X - mean                                   # [B, C, HW]
+
+        # Inverse diagonal covariance
+        inv_diag = 1.0 / (diag_cov + 1e-8)                # [1, C, HW]
+
+        # Diagonal Mahalanobis term
+        d_diag = torch.sum(diff**2 * inv_diag, dim=1)     # [B, HW]
+
+        # -------------------------------------------------------
+        # Low-rank correction (Woodbury identity)
+        # -------------------------------------------------------
+
+        # (HW, r, C)
+        u = U.permute(2, 1, 0)
+
         r = u.shape[1]
-        
 
-        inv_d_b = inv_diag.squeeze(0).permute(1, 0).unsqueeze(-1) # [HW, C, 1]
-        
-        Ainv_uT = inv_d_b * u.transpose(-2, -1)         # [HW, C, r]
-        middle = u @ Ainv_uT                            # [HW, r, r]
+        # (HW, C, 1)
+        inv_d = inv_diag.squeeze(0).permute(1, 0).unsqueeze(-1)
 
-        eye_r = torch.eye(r, device=device, dtype=dtype).unsqueeze(0) # [1, r, r]
-        middle_inv = torch.linalg.inv(eye_r + middle)   # [HW, r, r]
+        # (HW, C, r)
+        Ainv_uT = inv_d * u.transpose(-2, -1)
 
+        # (HW, r, r)
+        middle = u @ Ainv_uT
 
-        d_perm = diff.permute(2, 0, 1)                  # [HW, B, C]
+        eye = torch.eye(r, device=device, dtype=dtype).unsqueeze(0)
 
-        inv_d_proj = inv_diag.squeeze(0).permute(1, 0).unsqueeze(1) # [HW, 1, C]
-        
-        dAinv = d_perm * inv_d_proj                     # [HW, B, C]
+        # (HW, r, r)
+        middle_inv = torch.linalg.inv(eye + middle)
 
-        proj = dAinv @ u.transpose(-2, -1)              # [HW, B, r]
+        # (HW, B, C)
+        d_perm = diff.permute(2, 0, 1)
 
+        # (HW, B, C)
+        dAinv = d_perm * inv_diag.squeeze(0).permute(1, 0).unsqueeze(1)
 
-        d_low_perm = torch.sum((proj @ middle_inv) * proj, dim=-1) # [HW, B]
-        d_low = d_low_perm.permute(1, 0)                # [B, HW]
+        # (HW, B, r)
+        proj = dAinv @ u.transpose(-2, -1)
 
+        # (HW, B)
+        d_low = torch.sum((proj @ middle_inv) * proj, dim=-1)
+
+        # (B, HW)
+        d_low = d_low.permute(1, 0)
+
+        # Final Mahalanobis distance
         distances = d_diag - d_low
         distances = torch.sqrt(torch.clamp(distances, min=0.0))
-        distances = distances.view(B, H, W)
 
-        return distances
+        return distances.view(B, H, W)
