@@ -114,10 +114,10 @@ def main():
     parser.add_argument("--seed", type=int, default=1, help="Execution seed")
 
     args = parser.parse_args()
-
-    set_seed(args.seed)
     
     device = torch.device(args.device)
+
+    set_seed(args.seed, device)
 
     if args.mode == "train":
         main_train_cfa(args.dataset_path, args.category, args.backbone, args.ad_layers, args.epochs, args.save_path, device)

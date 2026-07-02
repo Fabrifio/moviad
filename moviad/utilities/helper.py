@@ -4,16 +4,18 @@ import torch
 import numpy as np
 
 
-def set_seed(seed: int):
+def set_seed(seed: int, device: torch.device) -> None:
     """
     Set the random, torch and numpy seed for reproducibility.
     Args:
         seed (int): The seed to set.
+        device (torch.device): The device to set the seed for.
     """
     random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
+    torch.manual_seed(seed)
+    if "cuda" in device:
+        torch.cuda.manual_seed_all(seed)
 
 
 def idx_to_layer_name(backbone: str, idx: int) -> str | int:
