@@ -556,3 +556,53 @@ class Padim(nn.Module):
         distances = distances.reshape(B, H, W)
 
         return torch.tensor(distances)
+
+
+    def compute_distances_faemlr_v2(self, embedding_vectors: torch.Tensor):
+        device = embedding_vectors.device
+        dtype = embedding_vectors.dtype
+        
+        B, C, H, W = embedding_vectors.shape
+        HW = H * W
+
+
+        X = embedding_vectors.view(B, C, HW)
+
+        mean = self.gauss_mean.unsqueeze(0)             # [1, C, HW]
+        diag_cov = self.diagonal_gauss_cov.unsqueeze(0) # [1, C, HW]
+        diff = X - mean                                 # [B, C, HW]
+
+        inv_diag = 1.0 / (diag_cov + 1e-8)              # [1, C, HW]
+
+        d_diag = torch.sum(diff**2 * inv_diag, dim=1)    # [B, HW]
+
+        u = self.pca_vecs.permute(2, 0, 1)              # [HW, r, C]
+        r = u.shape[1]
+        
+
+        inv_d_b = inv_diag.squeeze(0).permute(1, 0).unsqueeze(-1) # [HW, C, 1]
+        
+        Ainv_uT = inv_d_b * u.transpose(-2, -1)         # [HW, C, r]
+        middle = u @ Ainv_uT                            # [HW, r, r]
+
+        eye_r = torch.eye(r, device=device, dtype=dtype).unsqueeze(0) # [1, r, r]
+        middle_inv = torch.linalg.inv(eye_r + middle)   # [HW, r, r]
+
+
+        d_perm = diff.permute(2, 0, 1)                  # [HW, B, C]
+
+        inv_d_proj = inv_diag.squeeze(0).permute(1, 0).unsqueeze(1) # [HW, 1, C]
+        
+        dAinv = d_perm * inv_d_proj                     # [HW, B, C]
+
+        proj = dAinv @ u.transpose(-2, -1)              # [HW, B, r]
+
+
+        d_low_perm = torch.sum((proj @ middle_inv) * proj, dim=-1) # [HW, B]
+        d_low = d_low_perm.permute(1, 0)                # [B, HW]
+
+        distances = d_diag - d_low
+        distances = torch.sqrt(torch.clamp(distances, min=0.0))
+        distances = distances.view(B, H, W)
+
+        return distances
