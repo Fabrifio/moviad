@@ -502,60 +502,6 @@ class Padim(nn.Module):
             self.diagonal_gauss_cov = fa_D    # [C, HW]
 
         return fa_U, fa_D
-    
-
-    def compute_distances_faemlr(self, embedding_vectors: torch.Tensor):
-
-        B, C, H, W = embedding_vectors.shape
-        HW = H * W
-
-        X = embedding_vectors.view(B, C, HW).cpu().numpy()
-
-        mean = self.gauss_mean[None, :, :]             # [1, C, HW]
-        diag_cov = self.diagonal_gauss_cov[None, :, :] # [1, C, HW]
-        diff = X - mean                                # [B, C, HW]
-
-        inv_diag = 1.0 / (diag_cov + 1e-8)             # [1, C, HW]
-
-        # diagonal distance term
-        d_diag = np.sum(diff**2 * inv_diag, axis=1)    # [B, HW]
-
-        # faem low-rank vectors 
-        U = self.pca_vecs   # CHANGE NAME              # [r, C, HW]
-        r = U.shape[1]
-
-        d_low = np.zeros((B, HW), dtype=np.float32)
-
-        for h in range(HW):
-
-            u = U[:, :, h].T                           # [r, C]
-            inv_d = inv_diag[0, :, h]                  # [C]
-            d = diff[:, :, h]                          # [B, C]
-
-            Ainv_uT = (inv_d[:, None] * u.T)           # [C, r]
-
-            middle = u @ Ainv_uT                       # [r, r]
-
-            # (I + u D^{-1} u^T)^{-1}
-            middle_inv = np.linalg.inv(
-                np.eye(r, dtype=np.float32) + middle
-            )                                          # [r, r]
-
-            dAinv = d * inv_d                          # [B, C]
-
-            proj = dAinv @ u.T                         # [B, r]
-
-            d_low[:, h] = np.sum(
-                (proj @ middle_inv) * proj,
-                axis=1
-            )
-
-        # malahanobis distance
-        distances = d_diag - d_low
-        distances = np.sqrt(np.maximum(distances, 0.0))
-        distances = distances.reshape(B, H, W)
-
-        return torch.tensor(distances)
 
 
     def compute_distances_faemlr_v2(self, embedding_vectors: torch.Tensor):
@@ -639,3 +585,190 @@ class Padim(nn.Module):
         distances = torch.sqrt(torch.clamp(distances, min=0.0))
 
         return distances.view(B, H, W)
+
+    def compute_distances_faemlr_v2_optimized(
+        self,
+        embedding_vectors: torch.Tensor,
+    ):
+        device = embedding_vectors.device
+        dtype = embedding_vectors.dtype
+
+        B, C, H, W = embedding_vectors.shape
+        HW = H * W
+
+        # ------------------------------------------------------------------
+        # Input
+        # ------------------------------------------------------------------
+
+        X = embedding_vectors.reshape(B, C, HW)
+
+        mean = torch.as_tensor(
+            self.gauss_mean,
+            device=device,
+            dtype=dtype,
+        )
+
+        diag_cov = torch.as_tensor(
+            self.diagonal_gauss_cov,
+            device=device,
+            dtype=dtype,
+        )
+
+        U = torch.as_tensor(
+            self.pca_vecs,
+            device=device,
+            dtype=dtype,
+        )
+
+        # ------------------------------------------------------------------
+        # Diagonal Mahalanobis
+        # ------------------------------------------------------------------
+
+        diff = X - mean
+
+        inv_diag = torch.reciprocal(diag_cov + 1e-8)
+
+        scaled_diff = diff * inv_diag
+
+        d_diag = torch.sum(diff * scaled_diff, dim=1)
+
+        # (HW, r, C)
+        U_hw = U.permute(2, 1, 0).contiguous()
+
+        # (HW, C, 1)
+        inv_diag_hw = inv_diag.permute(1, 0).unsqueeze(-1)
+
+        # (HW, C, r)
+        weighted_U = inv_diag_hw * U_hw.transpose(1, 2)
+
+        # (HW, r, r)
+        middle = torch.bmm(U_hw, weighted_U)
+
+        r = U.shape[1]
+
+        A = middle + torch.eye(
+            r,
+            device=device,
+            dtype=dtype,
+        ).unsqueeze(0)
+
+        proj = torch.einsum(
+            "bch,crh->brh",
+            scaled_diff,
+            U,
+        )
+
+        # (HW,B,r)
+        proj = proj.permute(2, 0, 1).contiguous()
+
+        # ------------------------------------------------------------------
+        # Solve
+        # ------------------------------------------------------------------
+
+        sol = torch.linalg.solve(
+            A,
+            proj.transpose(-1, -2),
+        ).transpose(-1, -2)
+
+        # ------------------------------------------------------------------
+        # Quadratic correction
+        # ------------------------------------------------------------------
+
+        d_low = torch.sum(
+            sol * proj,
+            dim=-1,
+        ).transpose(0, 1)
+
+        # ------------------------------------------------------------------
+        # Distance
+        # ------------------------------------------------------------------
+
+        distances = torch.sqrt(
+            torch.clamp(
+                d_diag - d_low,
+                min=0.0,
+            )
+        )
+
+        return distances.reshape(B, H, W)
+    
+    def precompute_faemlr_matrices(self):
+
+        device = self.pca_vecs.device
+        dtype = self.pca_vecs.dtype
+
+        U = self.pca_vecs                              # (C, r, HW)
+        diag_cov = self.diagonal_gauss_cov            # (C, HW)
+
+        inv_diag = 1.0 / (diag_cov + 1e-8)            # (C, HW)
+
+        U_hw = U.transpose(2, 1, 0).copy()        # (HW, r, C)
+
+        weighted_U = (
+            inv_diag.transpose()[:, :, np.newaxis]
+            * U_hw.transpose(0, 2, 1)                 # (HW, C, r)
+        )
+
+        middle = np.matmul(U_hw, weighted_U)          # (HW, r, r)
+
+        r = U.shape[1]
+
+        eye = np.eye(r, dtype=U.dtype)[np.newaxis, ...]
+
+        self.A = eye + middle                            # (HW, r, r)
+
+
+    def compute_distances_faemlr_v2_optimized_cpu(
+        self,
+        embedding_vectors: np.ndarray,
+    ):
+
+        B, C, H, W = embedding_vectors.shape
+        HW = H * W
+
+
+        X = embedding_vectors.reshape(B, C, HW).cpu().numpy()  # (B, C, HW)
+
+
+        mean = self.gauss_mean                      # (C, HW)
+        diag_cov = self.diagonal_gauss_cov          # (C, HW)
+        U = self.pca_vecs                           # (C, r, HW)
+
+
+        diff = X - mean
+
+        inv_diag = 1.0 / (diag_cov + 1e-8)          # (C, HW)
+
+        scaled_diff = diff * inv_diag               # (B, C, HW)
+
+
+        d_diag = np.sum(diff * scaled_diff, axis=1) # (B, HW)
+
+        proj = np.einsum(
+            "bch,crh->brh",
+            scaled_diff,
+            U,
+        )                                           # (B, r, HW)
+
+        proj = proj.transpose(2, 0, 1).copy()       # (HW, B, r)
+
+        proj_t = proj.transpose(0, 2, 1)            # (HW, r, B)
+
+
+        sol_t = np.linalg.solve(self.A, proj_t)     # (HW, r, B)
+        
+
+        sol = sol_t.transpose(0, 2, 1)              # (HW, B, r)
+
+
+        d_low = np.sum(sol * proj, axis=-1).transpose()  # (B, HW)
+
+        distances = np.sqrt(
+            np.clip(
+                d_diag - d_low,
+                a_min=0.0,
+                a_max=None
+            )
+        )
+
+        return torch.Tensor(distances.reshape(B, H, W))
