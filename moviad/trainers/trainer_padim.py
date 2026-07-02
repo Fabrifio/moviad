@@ -14,7 +14,7 @@ class TrainerPadim(Trainer):
         train_dataloader: torch.utils.data.DataLoader,
         test_dataloader: torch.utils.data.DataLoader,
         device,
-        model_mode="std",
+        variant="standard",
         save_path=None,
         logger=None,
     ):
@@ -30,7 +30,7 @@ class TrainerPadim(Trainer):
             logger,
             save_path,
         )
-        self.model_mode = model_mode
+        self.variant = variant
 
     def train(self):
         print(f"Train Padim. Backbone: {self.model.backbone_model_name}")
@@ -56,11 +56,11 @@ class TrainerPadim(Trainer):
         embedding_vectors = self.model.raw_feature_maps_to_embeddings(layer_outputs)
         
         # 3. fit the multivariate Gaussian distribution
-        if self.model_mode == "std" or self.model_mode == "":
+        if self.variant == "standard" or self.variant == "":
             self.model.fit_multivariate_gaussian(embedding_vectors, update_params=True, logger=self.logger)
-        elif self.model_mode == "lite":
+        elif self.variant == "lite":
             self.model.fit_multivariate_diagonal_gaussian(embedding_vectors, update_params=True, logger=self.logger)
-        elif self.model_mode == "lr":
+        elif self.variant == "low-rank":
             self.model.fit_multivariate_diagonal_gaussian(embedding_vectors, update_params=True, logger=self.logger)
             self.model.fit_pca_lr(embedding_vectors, update_params=True)
 
