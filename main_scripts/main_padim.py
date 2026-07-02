@@ -3,6 +3,7 @@ import os, random
 from pathlib import Path
 from datetime import datetime
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Dataset
@@ -37,6 +38,7 @@ def main(args):
 
     for seed in seeds:
         random.seed(seed)
+        np.random.seed(seed)
         torch.manual_seed(seed)
         if "cuda" in device:
             torch.cuda.manual_seed_all(seed)
@@ -45,7 +47,7 @@ def main(args):
 
             print("class name:", category_name)
 
-            if args.train:
+            if args.mode == "train":
                 print("---- PaDiM train ----")
 
                 padim = Padim(
@@ -104,11 +106,11 @@ def main(args):
                         state_dict[hp] = getattr(padim, hp)
                     torch.save(state_dict, save_path, pickle_protocol=pickle.HIGHEST_PROTOCOL, _use_new_zipfile_serialization=True)
 
-            if args.test:
+            if args.mode == "test":
                 print("---- PaDiM test ----")
 
                 # load the model if it was not trained in this run
-                if not args.train:
+                if not args.mode == "train":
                     padim = Padim(
                         backbone,
                         category_name,

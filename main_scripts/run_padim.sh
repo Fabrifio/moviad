@@ -4,7 +4,7 @@ set -e
 SEEDS=(1)
 DIAG_FLAGS=(--no-diag)
 
-CATEGORIES=(pill)
+CATEGORIES=("pill")
 
 RESULTS_DIR="/home/fgenilotti/Desktop/Workspace/Research/vad-edge/moviad/outputs"
 DATA_PATH="/home/fgenilotti/Downloads/mvtec"
@@ -23,18 +23,16 @@ for CATEGORY in "${CATEGORIES[@]}"; do
       echo "Running category=${CATEGORY}, seed=${SEED}, diag_flag=${DIAG_FLAG}..."
 
       python main_scripts/main_padim.py \
-        --train \
-        --test \
+        --mode "train" \
         --results_dirpath "${RESULTS_DIR}" \
         --data_path "${DATA_PATH}" \
         --categories "${CATEGORY}" \
         --backbone mobilenet_v2 \
-        --variant standard \
-        --ad_layers 10 13 16 \
+        --ad_layers 7 10 13 \
+        --variant low-rank \
         --device cuda:0 \
         --seeds "${SEED}" \
-        ${DIAG_FLAG} \
-        --save_path "./outputs/patch_${CATEGORY}${SUFFIX}_s${SEED}.pt"
+        --save_path "./outputs/padim.pt"
 
       echo "Finished category=${CATEGORY}, seed=${SEED}, diag_flag=${DIAG_FLAG}"
       echo "---------------------------------------------"
