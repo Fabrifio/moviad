@@ -180,7 +180,7 @@ class Padim(nn.Module):
         elif self.variant == "lite":
             dist_list = self.compute_distances_diagonal(embedding_vectors)
         elif self.variant == "low-rank":
-            dist_list = self.compute_distances_lr(embedding_vectors)
+            dist_list = self.compute_distances_lr(embedding_vectors) #.to("cpu") if you use faemlr version not optimized for cpu
         else:
             raise NotImplementedError(f"Padim '{self.variant}' variant not supported.")
         
@@ -503,7 +503,18 @@ class Padim(nn.Module):
 
         return fa_U, fa_D
 
+# Limits:
+# wide_resnet50_2 latency covers a significant portion of total latency, and
+# the same effect for dynamic cpu and gpu memory (also due to concatenation)
 
+# For now:
+# Use always cpu optimized version (as distance in this approach has still the fastest latency and static 
+# and dynamic memory efficiency, both in GPU+CPU and CPU only cases). Probably we can do a GPU version
+# with v2_optimized to improve latency at cost of dynamic memory CPU and GPU (large cost, like >200 MB) 
+
+# Tailored only if used for GPU training and inference, but uses a lot GPU and CPU memory
+# due to torch, but is fast (memory use efficiency 2nd place, GPU latency tie with other so it is 1st, CPU 3rd)
+# Precomputing version for GPU tried only with the v2_optimized and v2_optimized_cpu
     def compute_distances_faemlr_v2(self, embedding_vectors: torch.Tensor):
         device = embedding_vectors.device
         dtype = embedding_vectors.dtype
@@ -586,6 +597,10 @@ class Padim(nn.Module):
 
         return distances.view(B, H, W)
 
+# Tailored only if used for GPU training and inference, less cathastrophic in CPU only training and inference, 
+# but still uses a lot "CPU" or "GPU and CPU" memory due to torch,
+# but is fast (memory use efficiency 3nd place, GPU latency tie with other so it is 1st, CPU 2nd)
+# Precomputing middle matrix is more latency and still static-memory efficient and dynamic memory reduces by 33%, but still high (GPU >200 MB)
     def compute_distances_faemlr_v2_optimized(
         self,
         embedding_vectors: torch.Tensor,

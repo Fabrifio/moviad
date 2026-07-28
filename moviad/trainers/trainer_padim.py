@@ -64,6 +64,13 @@ class TrainerPadim(Trainer):
             self.model.fit_multivariate_diagonal_gaussian(embedding_vectors, update_params=True, logger=self.logger)
             self.model.fit_pca_lr(embedding_vectors, update_params=True)
 
+            #self.model.fit_multivariate_diagonal_gaussian(embedding_vectors, update_params=True, logger=self.logger)
+            #self.model.fit_fa_lowrank(embedding_vectors, update_params=True)
+
+            #self.model.fit_multivariate_diagonal_gaussian(embedding_vectors, update_params=True, logger=self.logger)
+            #self.model.fit_fa_lowrank(embedding_vectors, update_params=True)
+            #self.model.precompute_faemlr_matrices()
+
         metrics = {
             "img_roc_auc": 0.1,
             "pxl_roc_auc": 0.1,
